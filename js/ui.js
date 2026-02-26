@@ -633,6 +633,27 @@ function onElevationHover(e, elevation, cssWidth, cssHeight, pad, w, h) {
 
 // --- Helpers ---
 
+// --- Search panel minimize/expand ---
+
+function minimizeSearchPanel() {
+    const panel = document.getElementById('search-panel');
+    const barText = document.getElementById('route-bar-text');
+    const startVal = document.getElementById('input-start').value || 'Start';
+    const endVal = document.getElementById('input-end').value || 'End';
+
+    // Truncate display names
+    const maxLen = 25;
+    const startShort = startVal.length > maxLen ? startVal.slice(0, maxLen) + '...' : startVal;
+    const endShort = endVal.length > maxLen ? endVal.slice(0, maxLen) + '...' : endVal;
+
+    barText.innerHTML = `<span class="bar-label start">A</span> ${escapeHtml(startShort)} <span class="bar-arrow">&rarr;</span> <span class="bar-label end">B</span> ${escapeHtml(endShort)}`;
+    panel.classList.add('minimized');
+}
+
+function expandSearchPanel() {
+    document.getElementById('search-panel').classList.remove('minimized');
+}
+
 function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;

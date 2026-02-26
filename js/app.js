@@ -88,6 +88,13 @@ function wireSearchPanel() {
         hideElevationProfile();
         _currentHgvGeojson = null;
         clickMode = 'start';
+        expandSearchPanel();
+    });
+
+    // Expand search panel when Edit button tapped (minimized bar)
+    document.getElementById('btn-expand-search').addEventListener('click', (e) => {
+        e.stopPropagation();
+        expandSearchPanel();
     });
 
     // Clear waypoints only
@@ -146,8 +153,11 @@ async function onPlanRoute() {
             hideElevationProfile();
         }
 
-        // Reverse geocode pin locations for display names
-        updatePinDisplayNames();
+        // Reverse geocode pin locations for display names, then minimize search panel
+        await updatePinDisplayNames();
+        if (window.innerWidth <= 768) {
+            minimizeSearchPanel();
+        }
 
     } catch (err) {
         console.error('Routing error:', err);
@@ -288,7 +298,10 @@ async function onAvoidAndReroute() {
         if (elevation) showElevationProfile(elevation);
         else hideElevationProfile();
 
-        updatePinDisplayNames();
+        await updatePinDisplayNames();
+        if (window.innerWidth <= 768) {
+            minimizeSearchPanel();
+        }
 
         showToast(`Re-routed avoiding ${onRouteRestrictions.length} restriction${onRouteRestrictions.length > 1 ? 's' : ''}. Check restrictions again to verify.`, 'success');
     } catch (err) {
