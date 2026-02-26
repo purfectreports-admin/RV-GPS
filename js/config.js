@@ -50,11 +50,15 @@ const CONFIG = {
 };
 
 // Load saved settings from localStorage, merging into CONFIG
+// Also checks URL hash for shared config (one-time import)
 function loadConfig() {
+    // Check URL hash for shared config first
+    const imported = importConfigFromHash();
+
     const saved = localStorage.getItem('rv-gps-config');
-    if (!saved) return;
+    if (!saved && !imported) return;
     try {
-        const parsed = JSON.parse(saved);
+        const parsed = imported || JSON.parse(saved);
         if (parsed.google?.apiKey) CONFIG.google.apiKey = parsed.google.apiKey;
         if (parsed.ors?.apiKey) CONFIG.ors.apiKey = parsed.ors.apiKey;
         if (parsed.vehicle) Object.assign(CONFIG.vehicle, parsed.vehicle);
@@ -63,10 +67,42 @@ function loadConfig() {
         if (parsed.map?.tileUrl) CONFIG.map.tileUrl = parsed.map.tileUrl;
         if (parsed.map?.tileAttribution) CONFIG.map.tileAttribution = parsed.map.tileAttribution;
         if (parsed.overpass?.baseUrl) CONFIG.overpass.baseUrl = parsed.overpass.baseUrl;
+        // If imported from hash, save to localStorage so it persists
+        if (imported) saveConfig();
     } catch (e) {
         console.warn('Failed to load saved config:', e);
     }
     loadQuotas();
+}
+
+// Encode current config into a shareable URL hash
+function generateShareUrl() {
+    const data = {
+        google: { apiKey: CONFIG.google.apiKey },
+        ors: { apiKey: CONFIG.ors.apiKey },
+        vehicle: { ...CONFIG.vehicle },
+        safetyBuffer: { ...CONFIG.safetyBuffer },
+        units: CONFIG.units,
+    };
+    const encoded = btoa(JSON.stringify(data));
+    const base = window.location.origin + window.location.pathname;
+    return base + '#config=' + encoded;
+}
+
+// Import config from URL hash (returns parsed object or null)
+function importConfigFromHash() {
+    const hash = window.location.hash;
+    if (!hash.startsWith('#config=')) return null;
+    try {
+        const encoded = hash.slice('#config='.length);
+        const parsed = JSON.parse(atob(encoded));
+        // Clear hash so it doesn't persist in URL bar
+        history.replaceState(null, '', window.location.pathname + window.location.search);
+        return parsed;
+    } catch (e) {
+        console.warn('Failed to import config from URL hash:', e);
+        return null;
+    }
 }
 
 // Save current config to localStorage

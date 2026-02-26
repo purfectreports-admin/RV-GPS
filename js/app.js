@@ -524,9 +524,24 @@ function wireSettingsModal() {
         document.getElementById(id).addEventListener('input', updateConversionHints);
     });
 
+    // Share settings link
+    document.getElementById('btn-share-settings').addEventListener('click', onShareSettings);
+
     // Close on backdrop click
     document.getElementById('settings-modal').addEventListener('click', (e) => {
         if (e.target.id === 'settings-modal') hideSettingsModal();
+    });
+}
+
+function onShareSettings() {
+    const status = document.getElementById('share-status');
+    const url = generateShareUrl();
+    navigator.clipboard.writeText(url).then(() => {
+        status.textContent = 'Link copied! Open it on your phone to import settings.';
+        status.style.color = 'var(--color-success)';
+    }).catch(() => {
+        // Fallback: show URL for manual copy
+        status.innerHTML = `<input type="text" value="${url}" style="width:100%;font-size:12px;" onclick="this.select()">`;
     });
 }
 

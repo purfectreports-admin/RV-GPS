@@ -194,6 +194,14 @@
                         <input type="text" id="input-tile-url" placeholder="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png">
                     </div>
                 </details>
+
+                <!-- Share settings to another device -->
+                <fieldset class="settings-section">
+                    <legend>Share to Another Device</legend>
+                    <p class="settings-note">Generate a link that carries your API keys and vehicle settings. Open it on your phone to auto-import everything.</p>
+                    <button id="btn-share-settings" class="btn btn-secondary" style="width:100%">Copy Setup Link</button>
+                    <div id="share-status" style="font-size:13px;margin-top:6px;min-height:20px;"></div>
+                </fieldset>
             </div>
             <div class="modal-footer">
                 <button id="btn-save-settings" class="btn btn-primary">Save</button>
@@ -239,23 +247,90 @@
         </div>
     </div>
 
+    <!-- Lock screen -->
+    <div id="lock-screen" class="lock-screen">
+        <div class="lock-box">
+            <div class="lock-icon">&#x1F6A0;</div>
+            <h2>RV Route Planner</h2>
+            <p>Enter password to continue</p>
+            <input type="password" id="lock-input" class="lock-input" placeholder="Password" autocomplete="off" autofocus>
+            <button id="lock-submit" class="btn btn-primary lock-btn">Unlock</button>
+            <div id="lock-error" class="lock-error"></div>
+        </div>
+    </div>
+
     <!-- Disclaimer banner -->
     <div id="disclaimer" class="disclaimer-bar">
         RV-aware routing based on OpenStreetMap data. Always verify signage on the road.
         <button class="disclaimer-close" aria-label="Dismiss">&times;</button>
     </div>
 
-    <!-- Scripts: dependency order -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-            crossorigin=""></script>
-    <script src="js/config.js"></script>
-    <script src="js/utils.js"></script>
-    <script src="js/map.js"></script>
-    <script src="js/geocoder.js"></script>
-    <script src="js/router.js"></script>
-    <script src="js/restrictions.js"></script>
-    <script src="js/ui.js"></script>
-    <script src="js/app.js"></script>
+    <!-- Gate script (runs first, blocks app until password verified) -->
+    <script>
+    (function() {
+        const HASH = '65befb69e80557bf171e6ab59ef9b4c5d3ee58da83fb7764b4d9076ff3125b5f';
+        const SESSION_KEY = 'rv-gps-unlocked';
+
+        async function sha256(str) {
+            const buf = await crypto.subtle.digest('SHA-256',
+                new TextEncoder().encode(str));
+            return Array.from(new Uint8Array(buf))
+                .map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        function unlock() {
+            document.getElementById('lock-screen').hidden = true;
+            document.body.classList.remove('locked');
+            sessionStorage.setItem(SESSION_KEY, '1');
+            loadAppScripts();
+        }
+
+        function loadAppScripts() {
+            var scripts = [
+                'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+                'js/config.js', 'js/utils.js', 'js/map.js',
+                'js/geocoder.js', 'js/router.js', 'js/restrictions.js',
+                'js/ui.js', 'js/app.js'
+            ];
+            function loadNext(i) {
+                if (i >= scripts.length) return;
+                var s = document.createElement('script');
+                s.src = scripts[i];
+                if (scripts[i].includes('leaflet')) {
+                    s.integrity = 'sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=';
+                    s.crossOrigin = '';
+                }
+                s.onload = function() { loadNext(i + 1); };
+                document.body.appendChild(s);
+            }
+            loadNext(0);
+        }
+
+        // Already unlocked this session?
+        if (sessionStorage.getItem(SESSION_KEY) === '1') {
+            unlock();
+            return;
+        }
+
+        // Show lock screen
+        document.body.classList.add('locked');
+
+        document.getElementById('lock-submit').addEventListener('click', async function() {
+            var input = document.getElementById('lock-input');
+            var hash = await sha256(input.value);
+            if (hash === HASH) {
+                unlock();
+            } else {
+                document.getElementById('lock-error').textContent = 'Wrong password';
+                input.value = '';
+                input.focus();
+            }
+        });
+
+        document.getElementById('lock-input').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') document.getElementById('lock-submit').click();
+        });
+    })();
+    </script>
 </body>
 </html>
