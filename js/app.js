@@ -119,7 +119,7 @@ async function onPlanRoute() {
         return;
     }
 
-    showLoading('Planning RV-aware route...');
+    showLoading('Analyzing routes for safest path...');
     clearRoutes();
     clearRestrictions();
     hideRouteSummary();

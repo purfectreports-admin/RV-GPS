@@ -39,16 +39,6 @@ async function getHGVRoute(start, end, viaPoints, avoidPolygons) {
         instructions_format: 'text',
     };
 
-    // Request alternative routes (only works without via-waypoints)
-    const canUseAlternatives = !viaPoints || viaPoints.length === 0;
-    if (canUseAlternatives) {
-        body.alternative_routes = {
-            target_count: 5,
-            weight_factor: 1.8,
-            share_factor: 0.6,
-        };
-    }
-
     // Add avoidance polygons if provided
     if (avoidPolygons && avoidPolygons.length > 0) {
         body.options.avoid_polygons = {
@@ -57,6 +47,10 @@ async function getHGVRoute(start, end, viaPoints, avoidPolygons) {
         };
     }
 
+    return _fetchHGVRoute(body);
+}
+
+async function _fetchHGVRoute(body) {
     const res = await abortableFetch('route-hgv',
         `${CONFIG.ors.baseUrl}/v2/directions/driving-hgv/geojson`,
         {
@@ -79,21 +73,151 @@ async function getHGVRoute(start, end, viaPoints, avoidPolygons) {
     }
 
     const geojson = await res.json();
-    const numAlts = geojson.features ? geojson.features.length : 1;
-
-    // If we got multiple alternatives, score and pick the safest
-    if (numAlts > 1) {
-        const best = pickSafestRoute(geojson);
-        _lastHgvResult = best;
-        return _lastHgvResult;
-    }
-
     const summary = extractSummary(geojson);
     const steps = extractSteps(geojson);
     const elevation = extractElevationProfile(geojson);
 
     _lastHgvResult = { geojson, summary, steps, elevation, routeAnalysis: null };
     return _lastHgvResult;
+}
+
+// Request car alternatives, analyze for safety, then route HGV along safest path
+async function getHGVRouteWithAlternatives(start, end, avoidPolygons) {
+    // Step 1: Get car alternatives (ORS supports alternatives on driving-car)
+    const carCoords = [[start.lng, start.lat], [end.lng, end.lat]];
+    const carBody = {
+        coordinates: carCoords,
+        alternative_routes: {
+            target_count: 5,
+            weight_factor: 1.8,
+            share_factor: 0.6,
+        },
+        preference: 'recommended',
+        units: 'm',
+        geometry: true,
+        elevation: true,
+        instructions: true,
+        instructions_format: 'text',
+    };
+
+    if (avoidPolygons && avoidPolygons.length > 0) {
+        carBody.options = {
+            avoid_polygons: {
+                type: 'MultiPolygon',
+                coordinates: avoidPolygons,
+            },
+        };
+    }
+
+    const carRes = await abortableFetch('route-car-alts',
+        `${CONFIG.ors.baseUrl}/v2/directions/driving-car/geojson`,
+        {
+            method: 'POST',
+            headers: {
+                'Authorization': CONFIG.ors.apiKey,
+                'Content-Type': 'application/json; charset=utf-8',
+                'Accept': 'application/json, application/geo+json',
+            },
+            body: JSON.stringify(carBody),
+        }
+    );
+
+    trackQuota('directions');
+
+    if (!carRes.ok) {
+        // Alternatives failed — fall back to standard HGV route
+        console.warn('Car alternatives request failed, falling back to standard HGV route');
+        return null;
+    }
+
+    const carGeojson = await carRes.json();
+    if (!carGeojson.features || carGeojson.features.length <= 1) {
+        // Only one route returned — no alternatives to compare
+        return null;
+    }
+
+    // Step 2: Score all car alternatives
+    const analysis = pickSafestRoute(carGeojson);
+
+    // Step 3: Sample waypoints from the safest car route to guide HGV
+    const bestCoords = getRouteCoordinates(analysis.geojson);
+    const guideWaypoints = _sampleWaypoints(bestCoords, start, end);
+
+    // Step 4: Route HGV through those waypoints for full restriction enforcement
+    const vehicle = getEffectiveVehicle();
+    const hgvCoords = [[start.lng, start.lat]];
+    for (const wp of guideWaypoints) {
+        hgvCoords.push(wp);
+    }
+    hgvCoords.push([end.lng, end.lat]);
+
+    const hgvBody = {
+        coordinates: hgvCoords,
+        options: {
+            vehicle_type: 'hgv',
+            profile_params: {
+                restrictions: {
+                    height: parseFloat(vehicle.height.toFixed(2)),
+                    weight: parseFloat(vehicle.weight.toFixed(2)),
+                    length: parseFloat(vehicle.length.toFixed(2)),
+                    width: parseFloat(vehicle.width.toFixed(2)),
+                    axleload: parseFloat(vehicle.axleload.toFixed(2)),
+                },
+            },
+        },
+        preference: 'recommended',
+        units: 'm',
+        geometry: true,
+        elevation: true,
+        instructions: true,
+        instructions_format: 'text',
+    };
+
+    if (avoidPolygons && avoidPolygons.length > 0) {
+        hgvBody.options.avoid_polygons = {
+            type: 'MultiPolygon',
+            coordinates: avoidPolygons,
+        };
+    }
+
+    const hgvResult = await _fetchHGVRoute(hgvBody);
+    // Attach the route analysis from the car alternatives comparison
+    hgvResult.routeAnalysis = analysis.routeAnalysis;
+    return hgvResult;
+}
+
+// Sample evenly-spaced waypoints along a route to guide HGV routing
+// Returns array of [lon, lat] — skips start/end (already provided)
+function _sampleWaypoints(coords, start, end) {
+    if (coords.length < 10) return [];
+
+    // Calculate total route length
+    let totalDist = 0;
+    for (let i = 1; i < coords.length; i++) {
+        const p = L.latLng(coords[i - 1][1], coords[i - 1][0]);
+        const c = L.latLng(coords[i][1], coords[i][0]);
+        totalDist += p.distanceTo(c);
+    }
+
+    // Sample ~1 waypoint per 15km, max 10 waypoints (ORS coordinate limit)
+    const numSamples = Math.min(10, Math.max(2, Math.floor(totalDist / 15000)));
+    const interval = totalDist / (numSamples + 1);
+    const waypoints = [];
+    let cumDist = 0;
+    let nextSample = interval;
+
+    for (let i = 1; i < coords.length && waypoints.length < numSamples; i++) {
+        const p = L.latLng(coords[i - 1][1], coords[i - 1][0]);
+        const c = L.latLng(coords[i][1], coords[i][0]);
+        cumDist += p.distanceTo(c);
+
+        if (cumDist >= nextSample) {
+            waypoints.push([coords[i][0], coords[i][1]]); // [lon, lat]
+            nextSample += interval;
+        }
+    }
+
+    return waypoints;
 }
 
 // Wrap a single GeoJSON feature as a FeatureCollection (so existing extract* functions work)
@@ -259,26 +383,58 @@ async function getCarRoute(start, end, viaPoints) {
 }
 
 async function planRoute(start, end, viaPoints, avoidPolygons) {
-    // Fire both requests in parallel
-    // If HGV fails, fall back to car-only with warning
     let hgvResult = null;
     let carResult = null;
     let hgvError = null;
 
-    const results = await Promise.allSettled([
-        getHGVRoute(start, end, viaPoints, avoidPolygons),
-        getCarRoute(start, end, viaPoints),
-    ]);
+    const canUseAlternatives = !viaPoints || viaPoints.length === 0;
 
-    if (results[0].status === 'fulfilled') {
-        hgvResult = results[0].value;
+    if (canUseAlternatives) {
+        // Strategy: get car alternatives, analyze for safety, route HGV along safest
+        // Run standard HGV + car in parallel with car alternatives analysis
+        const [stdResults, altResult] = await Promise.allSettled([
+            Promise.allSettled([
+                getHGVRoute(start, end, viaPoints, avoidPolygons),
+                getCarRoute(start, end, viaPoints),
+            ]),
+            getHGVRouteWithAlternatives(start, end, avoidPolygons),
+        ]);
+
+        // Extract standard results
+        const std = stdResults.status === 'fulfilled' ? stdResults.value : [
+            { status: 'rejected', reason: new Error('failed') },
+            { status: 'rejected', reason: new Error('failed') },
+        ];
+
+        if (std[1]?.status === 'fulfilled') carResult = std[1].value;
+
+        // Prefer the alternative-analyzed HGV route if it succeeded
+        if (altResult.status === 'fulfilled' && altResult.value) {
+            hgvResult = altResult.value;
+        } else if (std[0]?.status === 'fulfilled') {
+            // Fall back to standard HGV
+            hgvResult = std[0].value;
+        } else {
+            hgvError = std[0]?.reason || new Error('HGV routing failed');
+            console.error('HGV route failed:', hgvError);
+        }
     } else {
-        hgvError = results[0].reason;
-        console.error('HGV route failed:', hgvError);
-    }
+        // With waypoints, alternatives aren't available — standard parallel routing
+        const results = await Promise.allSettled([
+            getHGVRoute(start, end, viaPoints, avoidPolygons),
+            getCarRoute(start, end, viaPoints),
+        ]);
 
-    if (results[1].status === 'fulfilled') {
-        carResult = results[1].value;
+        if (results[0].status === 'fulfilled') {
+            hgvResult = results[0].value;
+        } else {
+            hgvError = results[0].reason;
+            console.error('HGV route failed:', hgvError);
+        }
+
+        if (results[1].status === 'fulfilled') {
+            carResult = results[1].value;
+        }
     }
 
     // If both failed, throw
