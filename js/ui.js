@@ -56,6 +56,31 @@ function showRouteSummary(hgvResult, carResult, hgvError, hairpinTurns) {
 
     html += '</div>';
 
+    // Route analysis summary (when alternatives were compared)
+    const analysis = hgvResult?.routeAnalysis;
+    if (analysis && analysis.totalRoutes > 1) {
+        const best = analysis.candidates.find(c => c.isBest);
+        const avoided = analysis.candidates.filter(c => !c.isBest);
+        const worstIssues = Math.max(...avoided.map(c => c.hairpinCount + c.sharpTurnCount + c.uTurnSteps));
+        const bestIssues = best.hairpinCount + best.sharpTurnCount + best.uTurnSteps;
+
+        html += `<div class="route-analysis">`;
+        html += `<div class="route-analysis-header">Analyzed ${analysis.totalRoutes} routes — selected safest</div>`;
+        html += `<div class="route-analysis-table">`;
+        for (const c of analysis.candidates) {
+            const issues = [];
+            if (c.hairpinCount > 0) issues.push(`${c.hairpinCount} hairpin`);
+            if (c.sharpTurnCount > 0) issues.push(`${c.sharpTurnCount} sharp`);
+            if (c.uTurnSteps > 0) issues.push(`${c.uTurnSteps} U-turn`);
+            if (c.steepCount > 0) issues.push(`${c.steepCount} steep`);
+            const issueStr = issues.length > 0 ? issues.join(', ') : 'no issues';
+            const cls = c.isBest ? 'route-alt best' : 'route-alt rejected';
+            const badge = c.isBest ? '<span class="alt-badge best">SELECTED</span>' : '<span class="alt-badge">REJECTED</span>';
+            html += `<div class="${cls}">${badge} Route ${c.index}: ${formatDistance(c.distance)}, ${formatDuration(c.duration)} — ${issueStr}</div>`;
+        }
+        html += `</div></div>`;
+    }
+
     // HGV failure warning
     if (hgvError) {
         html += `

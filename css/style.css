@@ -758,6 +758,54 @@ html, body {
     margin: 8px 0;
 }
 
+/* --- Route analysis (alternatives comparison) --- */
+.route-analysis {
+    margin: 8px 0 12px;
+    padding: 10px;
+    background: var(--color-surface);
+    border-radius: 8px;
+    border: 1px solid var(--color-border);
+}
+.route-analysis-header {
+    font-weight: 700;
+    font-size: 13px;
+    margin-bottom: 8px;
+    color: var(--color-success);
+}
+.route-analysis-table {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.route-alt {
+    font-size: 12px;
+    padding: 4px 6px;
+    border-radius: 4px;
+    line-height: 1.4;
+}
+.route-alt.best {
+    background: rgba(22, 163, 74, 0.1);
+    border: 1px solid rgba(22, 163, 74, 0.3);
+}
+.route-alt.rejected {
+    color: var(--color-text-muted);
+}
+.alt-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: var(--color-text-muted);
+    color: var(--color-bg);
+    margin-right: 4px;
+    vertical-align: middle;
+}
+.alt-badge.best {
+    background: var(--color-success);
+    color: #fff;
+}
+
 /* --- Loading overlay --- */
 #loading-overlay {
     position: fixed;

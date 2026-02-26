@@ -39,6 +39,16 @@ async function getHGVRoute(start, end, viaPoints, avoidPolygons) {
         instructions_format: 'text',
     };
 
+    // Request alternative routes (only works without via-waypoints)
+    const canUseAlternatives = !viaPoints || viaPoints.length === 0;
+    if (canUseAlternatives) {
+        body.alternative_routes = {
+            target_count: 5,
+            weight_factor: 1.8,
+            share_factor: 0.6,
+        };
+    }
+
     // Add avoidance polygons if provided
     if (avoidPolygons && avoidPolygons.length > 0) {
         body.options.avoid_polygons = {
@@ -69,12 +79,137 @@ async function getHGVRoute(start, end, viaPoints, avoidPolygons) {
     }
 
     const geojson = await res.json();
+    const numAlts = geojson.features ? geojson.features.length : 1;
+
+    // If we got multiple alternatives, score and pick the safest
+    if (numAlts > 1) {
+        const best = pickSafestRoute(geojson);
+        _lastHgvResult = best;
+        return _lastHgvResult;
+    }
+
     const summary = extractSummary(geojson);
     const steps = extractSteps(geojson);
     const elevation = extractElevationProfile(geojson);
 
-    _lastHgvResult = { geojson, summary, steps, elevation };
+    _lastHgvResult = { geojson, summary, steps, elevation, routeAnalysis: null };
     return _lastHgvResult;
+}
+
+// Wrap a single GeoJSON feature as a FeatureCollection (so existing extract* functions work)
+function _wrapFeature(feature) {
+    return { type: 'FeatureCollection', features: [feature] };
+}
+
+// Score and rank alternative routes, return the safest one
+function pickSafestRoute(geojson) {
+    const candidates = [];
+
+    for (let i = 0; i < geojson.features.length; i++) {
+        const feature = geojson.features[i];
+        const wrapped = _wrapFeature(feature);
+
+        const summary = extractSummary(wrapped);
+        const steps = extractSteps(wrapped);
+        const elevation = extractElevationProfile(wrapped);
+        const hairpins = detectHairpinTurns(wrapped);
+
+        // Count U-turn step types (type 9) from ORS instructions
+        const uTurnSteps = steps.filter(s => s.type === 9 && !s.isWarning).length;
+        // Count sharp turn step types (types 2, 3) from ORS instructions
+        const sharpSteps = steps.filter(s => (s.type === 2 || s.type === 3) && !s.isWarning).length;
+
+        // Hairpin geometry detections
+        const hairpinCount = hairpins.filter(t => t.type === 'hairpin').length;
+        const sharpTurnCount = hairpins.filter(t => t.type === 'sharp').length;
+
+        // Steep grade segments
+        const steepCount = elevation ? elevation.steepSegments.length : 0;
+
+        // Scoring: lower is better
+        // Hairpins are heavily penalized (25 pts each)
+        // Sharp turns moderately penalized (10 pts each)
+        // U-turn instructions (15 pts each)
+        // Sharp turn instructions (5 pts each)
+        // Steep grades mildly (3 pts each)
+        // Extra distance penalty: 1 pt per extra km beyond shortest route
+        const penalty =
+            hairpinCount * 25 +
+            sharpTurnCount * 10 +
+            uTurnSteps * 15 +
+            sharpSteps * 5 +
+            steepCount * 3;
+
+        candidates.push({
+            index: i,
+            feature,
+            wrapped,
+            summary,
+            steps,
+            elevation,
+            hairpins,
+            penalty,
+            hairpinCount,
+            sharpTurnCount,
+            uTurnSteps,
+            sharpSteps,
+            steepCount,
+        });
+    }
+
+    // Find shortest distance for distance penalty
+    const shortestDist = Math.min(...candidates.map(c => c.summary.distance));
+
+    // Add distance penalty (1 pt per extra km)
+    for (const c of candidates) {
+        c.distancePenalty = (c.summary.distance - shortestDist) / 1000;
+        c.totalScore = c.penalty + c.distancePenalty;
+    }
+
+    // Sort by score (lowest = safest)
+    candidates.sort((a, b) => a.totalScore - b.totalScore);
+
+    const best = candidates[0];
+    const analysisLines = [];
+    analysisLines.push(`Analyzed ${candidates.length} routes — selected safest:`);
+
+    for (const c of candidates) {
+        const isBest = c === best;
+        const dist = formatDistance(c.summary.distance);
+        const time = formatDuration(c.summary.duration);
+        const issues = [];
+        if (c.hairpinCount > 0) issues.push(`${c.hairpinCount} hairpin`);
+        if (c.sharpTurnCount > 0) issues.push(`${c.sharpTurnCount} sharp turn`);
+        if (c.uTurnSteps > 0) issues.push(`${c.uTurnSteps} U-turn`);
+        if (c.steepCount > 0) issues.push(`${c.steepCount} steep`);
+        const issueStr = issues.length > 0 ? issues.join(', ') : 'no issues';
+        const label = isBest ? '✓' : ' ';
+        analysisLines.push(`${label} Route ${c.index + 1}: ${dist}, ${time} — ${issueStr}`);
+    }
+
+    console.log('[Route Analysis]\n' + analysisLines.join('\n'));
+
+    return {
+        geojson: best.wrapped,
+        summary: best.summary,
+        steps: best.steps,
+        elevation: best.elevation,
+        routeAnalysis: {
+            totalRoutes: candidates.length,
+            selected: best.index + 1,
+            candidates: candidates.map(c => ({
+                index: c.index + 1,
+                distance: c.summary.distance,
+                duration: c.summary.duration,
+                hairpinCount: c.hairpinCount,
+                sharpTurnCount: c.sharpTurnCount,
+                uTurnSteps: c.uTurnSteps,
+                steepCount: c.steepCount,
+                totalScore: c.totalScore,
+                isBest: c === best,
+            })),
+        },
+    };
 }
 
 async function getCarRoute(start, end, viaPoints) {
