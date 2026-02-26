@@ -3,7 +3,14 @@
 let _currentHgvGeojson = null;
 let _currentRestrictions = []; // classified restriction markers
 
-document.addEventListener('DOMContentLoaded', () => {
+// Init runs immediately — scripts are loaded dynamically after unlock gate
+(function initApp() {
+    // If DOM isn't ready yet (loaded via static script tags in dev), wait
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initApp);
+        return;
+    }
+
     // 0. Register service worker for PWA/offline
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('./sw.js').catch(() => {});
@@ -36,7 +43,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 7. Traffic toggle
     document.getElementById('btn-traffic').addEventListener('click', toggleTrafficView);
-});
+})();
 
 // --- Search panel events ---
 
