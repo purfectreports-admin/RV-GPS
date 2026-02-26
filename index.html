@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>RV Route Planner</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚐</text></svg>">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="RV Route">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+          crossorigin="">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Top bar -->
+    <header id="top-bar">
+        <div class="top-bar-left">
+            <span class="app-title">RV Route Planner</span>
+        </div>
+        <div class="top-bar-right">
+            <button id="btn-traffic" class="traffic-toggle-btn" title="Toggle Google Traffic Layer">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M5 5l14 14M19 5L5 19"/></svg>
+                Traffic
+            </button>
+            <button id="btn-settings" class="icon-btn" title="Vehicle Settings" aria-label="Settings">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Map -->
+    <div id="map"></div>
+    <div id="google-map" hidden></div>
+
+    <!-- Search panel (floating over map) -->
+    <div id="search-panel">
+        <div class="search-row">
+            <span class="search-label start-label">A</span>
+            <div class="search-input-wrap">
+                <input type="text" id="input-start" placeholder="Click map or type start address" autocomplete="off">
+                <div id="suggestions-start" class="suggestions-list" hidden></div>
+            </div>
+        </div>
+        <div class="search-row">
+            <span class="search-label end-label">B</span>
+            <div class="search-input-wrap">
+                <input type="text" id="input-end" placeholder="Click map or type destination" autocomplete="off">
+                <div id="suggestions-end" class="suggestions-list" hidden></div>
+            </div>
+        </div>
+        <div class="search-actions">
+            <button id="btn-route" class="btn btn-primary" disabled>Plan Route</button>
+            <button id="btn-swap" class="btn btn-secondary" title="Swap start and end" aria-label="Swap">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="7 16 3 12 7 8"/><line x1="3" y1="12" x2="15" y2="12"/><polyline points="17 8 21 12 17 16"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            </button>
+            <button id="btn-clear" class="btn btn-secondary">Clear</button>
+        </div>
+        <div id="waypoint-info" class="waypoint-info" hidden>
+            <span id="waypoint-count"></span>
+            <button id="btn-clear-waypoints" class="btn-link">Clear waypoints</button>
+        </div>
+        <div id="click-hint" class="hint-text">Click the map to set start (A) and end (B) points</div>
+        <div id="favorites-bar" class="favorites-bar" hidden>
+            <div class="favorites-header">
+                <span class="favorites-title">Saved Places</span>
+                <button id="btn-close-favorites" class="btn-link" aria-label="Close">&#x2715;</button>
+            </div>
+            <div id="favorites-list" class="favorites-list"></div>
+        </div>
+        <div class="search-actions-secondary">
+            <button id="btn-save-location" class="btn-link" title="Save current start/end as favorite">&#9734; Save Location</button>
+            <button id="btn-show-favorites" class="btn-link" title="Show saved places">&#9733; Favorites</button>
+        </div>
+    </div>
+
+    <!-- Route summary (bottom panel, hidden by default) -->
+    <div id="route-summary" class="panel-bottom" hidden>
+        <div class="panel-handle" aria-hidden="true"></div>
+        <div id="route-summary-content"></div>
+        <div id="elevation-container" hidden>
+            <div class="elevation-header">
+                <span class="elevation-title">Elevation Profile</span>
+                <span id="elevation-stats" class="elevation-stats"></span>
+            </div>
+            <div id="elevation-warnings"></div>
+            <div class="elevation-chart-wrap">
+                <canvas id="elevation-canvas" width="800" height="160"></canvas>
+                <div id="elevation-tooltip" class="elevation-tooltip" hidden></div>
+            </div>
+            <div class="elevation-legend">
+                <span class="legend-item"><span class="legend-swatch grade-normal"></span> &lt;6% grade</span>
+                <span class="legend-item"><span class="legend-swatch grade-steep"></span> &ge;6% grade (use low gear)</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading overlay -->
+    <div id="loading-overlay" hidden>
+        <div class="loading-spinner"></div>
+        <div id="loading-message">Planning route...</div>
+    </div>
+
+    <!-- Toast messages -->
+    <div id="toast-container"></div>
+
+    <!-- Settings modal -->
+    <div id="settings-modal" class="modal-backdrop" hidden>
+        <div class="modal">
+            <div class="modal-header">
+                <h2>Vehicle Settings</h2>
+                <button class="modal-close" id="btn-close-settings" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- Google API Key -->
+                <fieldset class="settings-section">
+                    <legend>Google Places API Key (Address Search)</legend>
+                    <p class="settings-note">For address autocomplete. <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console</a> &mdash; $200/mo free credit covers personal use.</p>
+                    <div class="field-row">
+                        <input type="text" id="input-google-key" placeholder="Google API key">
+                        <button id="btn-test-google" class="btn btn-secondary">Test</button>
+                    </div>
+                    <div id="google-key-status"></div>
+                </fieldset>
+
+                <!-- ORS API Key -->
+                <fieldset class="settings-section">
+                    <legend>OpenRouteService API Key (Routing)</legend>
+                    <p class="settings-note">For RV-aware routing. Free signup at <a href="https://openrouteservice.org/dev/#/signup" target="_blank" rel="noopener">openrouteservice.org</a>.</p>
+                    <div class="field-row">
+                        <input type="text" id="input-api-key" placeholder="ORS API key">
+                        <button id="btn-test-key" class="btn btn-secondary">Test</button>
+                    </div>
+                    <div id="key-status"></div>
+                    <p class="settings-warn">Do not share this app publicly with your keys embedded.</p>
+                </fieldset>
+
+                <!-- Vehicle dimensions -->
+                <fieldset class="settings-section">
+                    <legend>Vehicle Dimensions</legend>
+                    <div class="unit-toggle">
+                        <button id="btn-unit-imperial" class="btn btn-sm">Imperial</button>
+                        <button id="btn-unit-metric" class="btn btn-sm">Metric</button>
+                    </div>
+                    <div class="field-row">
+                        <label for="input-height">Height</label>
+                        <input type="number" id="input-height" step="0.1" min="0">
+                        <span class="unit-label" id="unit-height">ft</span>
+                        <span class="conversion-hint" id="hint-height"></span>
+                    </div>
+                    <div class="field-row">
+                        <label for="input-weight">Weight (GVWR)</label>
+                        <input type="number" id="input-weight" step="100" min="0">
+                        <span class="unit-label" id="unit-weight">lbs</span>
+                        <span class="conversion-hint" id="hint-weight"></span>
+                    </div>
+                    <div class="field-row">
+                        <label for="input-length">Length</label>
+                        <input type="number" id="input-length" step="0.1" min="0">
+                        <span class="unit-label" id="unit-length">ft</span>
+                        <span class="conversion-hint" id="hint-length"></span>
+                    </div>
+                    <div class="field-row">
+                        <label for="input-width">Width</label>
+                        <input type="number" id="input-width" step="0.1" min="0">
+                        <span class="unit-label" id="unit-width">ft</span>
+                        <span class="conversion-hint" id="hint-width"></span>
+                    </div>
+                </fieldset>
+
+                <!-- Advanced -->
+                <details class="settings-section">
+                    <summary>Advanced</summary>
+                    <div class="field-row">
+                        <label for="input-axleload">Axle Load</label>
+                        <input type="number" id="input-axleload" step="0.1" min="0">
+                        <span class="unit-label" id="unit-axleload">lbs</span>
+                        <span class="conversion-hint" id="hint-axleload"></span>
+                    </div>
+                    <div class="field-row checkbox-row">
+                        <input type="checkbox" id="input-safety-buffer" checked>
+                        <label for="input-safety-buffer">Safety buffer (adds ~6" height, ~1 ft length)</label>
+                    </div>
+                    <div class="field-row">
+                        <label for="input-overpass-url">Overpass Endpoint</label>
+                        <input type="text" id="input-overpass-url" placeholder="https://overpass-api.de/api/interpreter">
+                    </div>
+                    <div class="field-row">
+                        <label for="input-tile-url">Tile Server URL</label>
+                        <input type="text" id="input-tile-url" placeholder="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png">
+                    </div>
+                </details>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-save-settings" class="btn btn-primary">Save</button>
+                <button id="btn-reset-settings" class="btn btn-secondary">Reset Defaults</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- First-run welcome (only shown once) -->
+    <div id="welcome-modal" class="modal-backdrop" hidden>
+        <div class="modal">
+            <div class="modal-header">
+                <h2>Welcome to RV Route Planner</h2>
+            </div>
+            <div class="modal-body">
+                <p>Plan RV-aware routes that account for your vehicle's height, weight, and length restrictions.</p>
+
+                <p><strong>Two free API keys needed (one-time setup):</strong></p>
+
+                <fieldset class="settings-section">
+                    <legend>1. Google Places (Address Search)</legend>
+                    <p class="settings-note">Best address coverage. Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console</a>, enable Places API + Geocoding API, create an API key. $200/mo free credit covers personal use.</p>
+                    <div class="field-row">
+                        <input type="text" id="input-welcome-google" placeholder="Google API key">
+                        <button id="btn-welcome-test-google" class="btn btn-secondary">Test</button>
+                    </div>
+                    <div id="welcome-google-status"></div>
+                </fieldset>
+
+                <fieldset class="settings-section">
+                    <legend>2. OpenRouteService (RV Routing)</legend>
+                    <p class="settings-note">Go to <a href="https://openrouteservice.org/dev/#/signup" target="_blank" rel="noopener">openrouteservice.org</a>, create free account, request a token.</p>
+                    <div class="field-row">
+                        <input type="text" id="input-welcome-key" placeholder="ORS API key">
+                        <button id="btn-welcome-test" class="btn btn-secondary">Test</button>
+                    </div>
+                    <div id="welcome-key-status"></div>
+                </fieldset>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-welcome-save" class="btn btn-primary" disabled>Get Started</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Disclaimer banner -->
+    <div id="disclaimer" class="disclaimer-bar">
+        RV-aware routing based on OpenStreetMap data. Always verify signage on the road.
+        <button class="disclaimer-close" aria-label="Dismiss">&times;</button>
+    </div>
+
+    <!-- Scripts: dependency order -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+            crossorigin=""></script>
+    <script src="js/config.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/map.js"></script>
+    <script src="js/geocoder.js"></script>
+    <script src="js/router.js"></script>
+    <script src="js/restrictions.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
