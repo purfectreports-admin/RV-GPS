@@ -144,19 +144,20 @@ function showRouteSummary(hgvResult, carResult, hgvError) {
         panel.classList.remove('collapsed');
     }
 
-    // Toggle collapse on handle or panel click (when collapsed)
+    // Toggle collapse on handle tap; panel body tap only expands when collapsed
     const handle = panel.querySelector('.panel-handle');
     if (handle) {
-        handle.onclick = function () {
+        handle.onclick = function (e) {
+            e.stopPropagation(); // Don't let panel listener undo the toggle
             panel.classList.toggle('collapsed');
         };
     }
-    panel.addEventListener('click', function _expandOnce(e) {
-        if (panel.classList.contains('collapsed')) {
+    // Clicking the panel body (not handle) only expands when collapsed
+    panel.onclick = function (e) {
+        if (panel.classList.contains('collapsed') && e.target !== handle) {
             panel.classList.remove('collapsed');
-            e.stopPropagation();
         }
-    });
+    };
 
     // Wire restriction button
     const restrictBtn = document.getElementById('btn-load-restrictions');

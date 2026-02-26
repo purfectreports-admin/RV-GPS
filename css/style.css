@@ -406,7 +406,7 @@ html, body {
     overflow: hidden;
 }
 .panel-bottom.collapsed::after {
-    content: 'Tap to expand';
+    content: 'Tap to expand ▲';
     display: block;
     text-align: center;
     font-size: 12px;
@@ -426,6 +426,8 @@ html, body {
     border-radius: 2px;
     margin: 0 auto 12px;
     cursor: pointer;
+    padding: 10px 30px;       /* larger tap target */
+    background-clip: content-box;
 }
 
 .route-comparison {
