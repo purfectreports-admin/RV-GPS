@@ -7,6 +7,7 @@ let endMarker = null;
 let hgvRouteLayer = null;
 let carRouteLayer = null;
 let restrictionLayer = null;
+let hairpinLayer = null;
 
 // State
 let startLatLng = null;
@@ -30,6 +31,7 @@ function initMap() {
     map.invalidateSize();
     map.on('click', onMapClick);
     restrictionLayer = L.layerGroup().addTo(map);
+    hairpinLayer = L.layerGroup().addTo(map);
 }
 
 function updateTileLayer() {
@@ -248,6 +250,7 @@ function clearAll() {
     clearWaypoints();
     clearRoutes();
     clearRestrictions();
+    clearHairpinMarkers();
     document.getElementById('input-start').value = '';
     document.getElementById('input-end').value = '';
     document.getElementById('route-summary').hidden = true;
@@ -319,6 +322,33 @@ function addRestrictionMarker(lat, lon, type, details) {
         `<strong>${type.charAt(0).toUpperCase() + type.slice(1)} Restriction</strong><br>${details}`
     );
     restrictionLayer.addLayer(marker);
+}
+
+function addHairpinMarkers(turns) {
+    if (!hairpinLayer) return;
+    hairpinLayer.clearLayers();
+
+    for (const t of turns) {
+        const isHairpin = t.type === 'hairpin';
+        const cls = isHairpin ? 'restriction-marker hairpin-marker' : 'restriction-marker sharp-turn-marker';
+        const label = isHairpin ? 'U' : 'S';
+        const title = isHairpin ? 'Hairpin / U-turn' : 'Very Sharp Turn';
+        const icon = L.divIcon({
+            className: '',
+            html: `<div class="${cls}">${label}</div>`,
+            iconSize: [26, 26],
+            iconAnchor: [13, 13],
+        });
+
+        const angleText = Math.round(t.angle);
+        const popup = `<strong>${title}</strong><br>${angleText}° turn — dangerous for long RVs`;
+        const marker = L.marker([t.lat, t.lon], { icon }).bindPopup(popup);
+        hairpinLayer.addLayer(marker);
+    }
+}
+
+function clearHairpinMarkers() {
+    if (hairpinLayer) hairpinLayer.clearLayers();
 }
 
 function updateRouteButton() {

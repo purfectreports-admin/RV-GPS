@@ -746,6 +746,17 @@ html, body {
     background: #b91c1c;
     color: #fff;
 }
+.restriction-badge.hairpin-badge {
+    background: #dc2626;
+    color: #fff;
+}
+.restriction-badge.sharp-badge {
+    background: #ea580c;
+    color: #fff;
+}
+.hairpin-warnings {
+    margin: 8px 0;
+}
 
 /* --- Loading overlay --- */
 #loading-overlay {
@@ -1024,6 +1035,8 @@ html, body {
 .restriction-weight { background: #ea580c; }
 .restriction-length { background: var(--color-warning); color: #000; }
 .restriction-axleload { background: #7c3aed; }
+.hairpin-marker { background: #dc2626; border-radius: 50%; }
+.sharp-turn-marker { background: #ea580c; border-radius: 50%; }
 
 /* --- Quota indicator --- */
 .quota-bar {

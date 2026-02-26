@@ -138,11 +138,21 @@ async function onPlanRoute() {
 
         fitToRoutes();
 
+        // Detect hairpin / sharp turns in the RV route
+        const routeGeojson = hgvResult ? hgvResult.geojson : (carResult ? carResult.geojson : null);
+        const hairpinTurns = routeGeojson ? detectHairpinTurns(routeGeojson) : [];
+        if (hairpinTurns.length > 0) {
+            addHairpinMarkers(hairpinTurns);
+        } else {
+            clearHairpinMarkers();
+        }
+
         // Show summary panel
         showRouteSummary(
             hgvResult ? hgvResult : null,
             carResult ? carResult : null,
-            hgvError
+            hgvError,
+            hairpinTurns
         );
 
         // Show elevation profile if available
@@ -288,10 +298,17 @@ async function onAvoidAndReroute() {
         }
 
         fitToRoutes();
+
+        const routeGeojson2 = hgvResult ? hgvResult.geojson : (carResult ? carResult.geojson : null);
+        const hairpinTurns2 = routeGeojson2 ? detectHairpinTurns(routeGeojson2) : [];
+        if (hairpinTurns2.length > 0) addHairpinMarkers(hairpinTurns2);
+        else clearHairpinMarkers();
+
         showRouteSummary(
             hgvResult || null,
             carResult || null,
-            hgvError
+            hgvError,
+            hairpinTurns2
         );
 
         const elevation = hgvResult?.elevation || null;

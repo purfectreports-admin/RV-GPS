@@ -24,7 +24,7 @@ function hideLoading() {
 
 // --- Route summary ---
 
-function showRouteSummary(hgvResult, carResult, hgvError) {
+function showRouteSummary(hgvResult, carResult, hgvError, hairpinTurns) {
     const panel = document.getElementById('route-summary');
     const content = document.getElementById('route-summary-content');
     let html = '';
@@ -82,6 +82,20 @@ function showRouteSummary(hgvResult, carResult, hgvError) {
             RV route is ${sign}${formatDistance(Math.abs(distDiff))} ${distDiff >= 0 ? 'longer' : 'shorter'}
             &bull; ${sign}${formatDuration(Math.abs(timeDiff))} ${timeDiff >= 0 ? 'slower' : 'faster'}
         </div>`;
+    }
+
+    // Hairpin / sharp turn warnings
+    if (hairpinTurns && hairpinTurns.length > 0) {
+        const hairpins = hairpinTurns.filter(t => t.type === 'hairpin');
+        const sharps = hairpinTurns.filter(t => t.type === 'sharp');
+        html += '<div class="hairpin-warnings">';
+        if (hairpins.length > 0) {
+            html += `<div class="warning-item danger"><span class="restriction-badge hairpin-badge">U-TURN</span> ${hairpins.length} hairpin/U-turn${hairpins.length > 1 ? 's' : ''} detected — may be impassable for your RV</div>`;
+        }
+        if (sharps.length > 0) {
+            html += `<div class="warning-item caution"><span class="restriction-badge sharp-badge">SHARP</span> ${sharps.length} very sharp turn${sharps.length > 1 ? 's' : ''} detected (>120°) — use extreme caution</div>`;
+        }
+        html += '</div>';
     }
 
     // Navigate in Google Maps button

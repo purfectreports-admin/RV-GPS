@@ -398,6 +398,75 @@ function createAvoidancePolygon(lat, lon, radiusMeters) {
     ]];
 }
 
+// --- Hairpin / sharp turn detection ---
+// Analyzes route geometry to find turns too tight for a long RV.
+// Returns array of { lat, lon, angle, type: 'hairpin'|'sharp', distAlongRoute }
+
+function detectHairpinTurns(geojson) {
+    const coords = getRouteCoordinates(geojson);
+    if (coords.length < 3) return [];
+
+    const turns = [];
+    // Minimum distance between route points to consider (skip GPS jitter)
+    const minSegLen = 15; // meters
+
+    for (let i = 1; i < coords.length - 1; i++) {
+        const prev = L.latLng(coords[i - 1][1], coords[i - 1][0]);
+        const curr = L.latLng(coords[i][1], coords[i][0]);
+        const next = L.latLng(coords[i + 1][1], coords[i + 1][0]);
+
+        const d1 = prev.distanceTo(curr);
+        const d2 = curr.distanceTo(next);
+        if (d1 < minSegLen || d2 < minSegLen) continue;
+
+        const bearing1 = _bearing(prev.lat, prev.lng, curr.lat, curr.lng);
+        const bearing2 = _bearing(curr.lat, curr.lng, next.lat, next.lng);
+
+        // Angle of turn: 0 = straight, 180 = full U-turn
+        let turnAngle = Math.abs(bearing2 - bearing1);
+        if (turnAngle > 180) turnAngle = 360 - turnAngle;
+
+        // For a 34ft RV:
+        // > 150° = hairpin / U-turn — nearly impossible
+        // > 120° = very sharp — dangerous, likely need multiple maneuvers
+        if (turnAngle >= 120) {
+            // Check if this is too close to a previous detection (de-dupe within 50m)
+            const lastTurn = turns.length > 0 ? turns[turns.length - 1] : null;
+            if (lastTurn && curr.distanceTo(L.latLng(lastTurn.lat, lastTurn.lon)) < 50) {
+                // Keep the sharper one
+                if (turnAngle > lastTurn.angle) {
+                    turns[turns.length - 1] = {
+                        lat: coords[i][1],
+                        lon: coords[i][0],
+                        angle: turnAngle,
+                        type: turnAngle >= 150 ? 'hairpin' : 'sharp',
+                    };
+                }
+                continue;
+            }
+            turns.push({
+                lat: coords[i][1],
+                lon: coords[i][0],
+                angle: turnAngle,
+                type: turnAngle >= 150 ? 'hairpin' : 'sharp',
+            });
+        }
+    }
+
+    return turns;
+}
+
+// Calculate bearing between two points in degrees (0-360)
+function _bearing(lat1, lon1, lat2, lon2) {
+    const toRad = Math.PI / 180;
+    const dLon = (lon2 - lon1) * toRad;
+    const y = Math.sin(dLon) * Math.cos(lat2 * toRad);
+    const x = Math.cos(lat1 * toRad) * Math.sin(lat2 * toRad) -
+              Math.sin(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.cos(dLon);
+    let brng = Math.atan2(y, x) / toRad;
+    return (brng + 360) % 360;
+}
+
 // Test if ORS API key is valid (simple geocode request)
 async function testApiKey(key) {
     try {
