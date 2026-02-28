@@ -199,8 +199,11 @@ function _sampleWaypoints(coords, start, end) {
         totalDist += p.distanceTo(c);
     }
 
-    // Sample ~1 waypoint per 15km, max 10 waypoints (ORS coordinate limit)
-    const numSamples = Math.min(10, Math.max(2, Math.floor(totalDist / 15000)));
+    // For short routes (<10km), don't add waypoints — let ORS find the natural HGV path
+    if (totalDist < 10000) return [];
+
+    // Sample ~1 waypoint per 20km, max 8 waypoints (leave room for ORS flexibility)
+    const numSamples = Math.min(8, Math.max(1, Math.floor(totalDist / 20000)));
     const interval = totalDist / (numSamples + 1);
     const waypoints = [];
     let cumDist = 0;
@@ -284,9 +287,9 @@ function pickSafestRoute(geojson) {
     // Find shortest distance for distance penalty
     const shortestDist = Math.min(...candidates.map(c => c.summary.distance));
 
-    // Add distance penalty (1 pt per extra km)
+    // Add distance penalty (5 pts per extra km — heavily penalize detours)
     for (const c of candidates) {
-        c.distancePenalty = (c.summary.distance - shortestDist) / 1000;
+        c.distancePenalty = ((c.summary.distance - shortestDist) / 1000) * 5;
         c.totalScore = c.penalty + c.distancePenalty;
     }
 
@@ -408,12 +411,25 @@ async function planRoute(start, end, viaPoints, avoidPolygons) {
 
         if (std[1]?.status === 'fulfilled') carResult = std[1].value;
 
-        // Prefer the alternative-analyzed HGV route if it succeeded
-        if (altResult.status === 'fulfilled' && altResult.value) {
-            hgvResult = altResult.value;
-        } else if (std[0]?.status === 'fulfilled') {
-            // Fall back to standard HGV
-            hgvResult = std[0].value;
+        // Prefer the alternative-analyzed HGV route if it succeeded and isn't wildly longer
+        const stdHgv = std[0]?.status === 'fulfilled' ? std[0].value : null;
+        const altHgv = (altResult.status === 'fulfilled' && altResult.value) ? altResult.value : null;
+
+        if (altHgv && stdHgv) {
+            // Pick whichever is shorter, unless the alternative avoids significantly more hazards
+            const altDist = altHgv.summary.distance;
+            const stdDist = stdHgv.summary.distance;
+            if (altDist > stdDist * 1.5) {
+                // Alternative is >50% longer — prefer standard route
+                console.warn(`Alternative route too long (${(altDist/1609).toFixed(1)} mi vs ${(stdDist/1609).toFixed(1)} mi) — using standard HGV`);
+                hgvResult = stdHgv;
+            } else {
+                hgvResult = altHgv;
+            }
+        } else if (altHgv) {
+            hgvResult = altHgv;
+        } else if (stdHgv) {
+            hgvResult = stdHgv;
         } else {
             hgvError = std[0]?.reason || new Error('HGV routing failed');
             console.error('HGV route failed:', hgvError);
