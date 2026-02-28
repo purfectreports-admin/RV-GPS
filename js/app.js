@@ -212,9 +212,7 @@ async function onPlanRoute() {
 
         // Reverse geocode pin locations for display names, then minimize search panel
         await updatePinDisplayNames();
-        if (window.innerWidth <= 768) {
-            minimizeSearchPanel();
-        }
+        minimizeSearchPanel();
 
     } catch (err) {
         console.error('Routing error:', err);
@@ -385,9 +383,7 @@ async function onAvoidAndReroute() {
         else hideElevationProfile();
 
         await updatePinDisplayNames();
-        if (window.innerWidth <= 768) {
-            minimizeSearchPanel();
-        }
+        minimizeSearchPanel();
 
         showToast(`Re-routed avoiding ${onRouteRestrictions.length} restriction${onRouteRestrictions.length > 1 ? 's' : ''}. Check restrictions again to verify.`, 'success');
     } catch (err) {

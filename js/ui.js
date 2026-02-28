@@ -176,12 +176,8 @@ function showRouteSummary(hgvResult, carResult, hgvError, hairpinTurns) {
     content.innerHTML = html;
     panel.hidden = false;
 
-    // On mobile/tablet, start collapsed so map stays visible
-    if (window.innerWidth <= 768) {
-        panel.classList.add('collapsed');
-    } else {
-        panel.classList.remove('collapsed');
-    }
+    // Always start collapsed so map stays visible
+    panel.classList.add('collapsed');
 
     // Toggle collapse on handle tap; panel body tap only expands when collapsed
     const handle = panel.querySelector('.panel-handle');
