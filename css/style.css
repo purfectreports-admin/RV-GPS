@@ -1085,6 +1085,7 @@ html, body {
 .restriction-axleload { background: #7c3aed; }
 .hairpin-marker { background: #dc2626; border-radius: 50%; }
 .sharp-turn-marker { background: #ea580c; border-radius: 50%; }
+.hard-turn-marker { background: #d97706; border-radius: 50%; }
 
 /* --- Roadblock markers --- */
 .roadblock-marker {

@@ -342,9 +342,14 @@ function addHairpinMarkers(turns) {
 
     for (const t of turns) {
         const isHairpin = t.type === 'hairpin';
-        const cls = isHairpin ? 'restriction-marker hairpin-marker' : 'restriction-marker sharp-turn-marker';
-        const label = isHairpin ? 'U' : 'S';
-        const title = isHairpin ? 'Hairpin / U-turn' : 'Very Sharp Turn';
+        const isSharp = t.type === 'sharp';
+        const cls = isHairpin ? 'restriction-marker hairpin-marker'
+            : isSharp ? 'restriction-marker sharp-turn-marker'
+            : 'restriction-marker hard-turn-marker';
+        const label = isHairpin ? 'U' : isSharp ? 'S' : '!';
+        const title = isHairpin ? 'Hairpin / U-turn'
+            : isSharp ? 'Very Sharp Turn'
+            : 'Hard Turn';
         const icon = L.divIcon({
             className: '',
             html: `<div class="${cls}">${label}</div>`,

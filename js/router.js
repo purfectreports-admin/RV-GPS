@@ -249,6 +249,7 @@ function pickSafestRoute(geojson) {
         // Hairpin geometry detections
         const hairpinCount = hairpins.filter(t => t.type === 'hairpin').length;
         const sharpTurnCount = hairpins.filter(t => t.type === 'sharp').length;
+        const hardTurnCount = hairpins.filter(t => t.type === 'hard').length;
 
         // Steep grade segments
         const steepCount = elevation ? elevation.steepSegments.length : 0;
@@ -256,19 +257,21 @@ function pickSafestRoute(geojson) {
         // Count steps on unnamed roads (no road name = likely residential/backroad)
         const unnamedSteps = steps.filter(s => !s.isWarning && !s.name && s.distance > 50).length;
 
-        // Scoring: lower is better
-        // Hairpins heavily penalized (25 pts)
-        // Sharp turns moderately penalized (10 pts)
-        // U-turn instructions (15 pts)
-        // Sharp turn instructions (5 pts)
-        // Unnamed/backroad segments (8 pts each — prefer named main roads)
-        // Steep grades mildly (3 pts)
+        // Scoring: lower is better — safety and ease over distance
+        // Hairpins (>150°): 30 pts — nearly impossible for 34ft RV
+        // Sharp turns (110-150°): 20 pts — dangerous
+        // Hard turns (90-110°): 8 pts — difficult but doable
+        // U-turn instructions: 25 pts
+        // Sharp turn instructions: 8 pts
+        // Unnamed/backroad segments: 10 pts — prefer named main roads
+        // Steep grades: 3 pts
         const penalty =
-            hairpinCount * 25 +
-            sharpTurnCount * 10 +
-            uTurnSteps * 15 +
-            sharpSteps * 5 +
-            unnamedSteps * 8 +
+            hairpinCount * 30 +
+            sharpTurnCount * 20 +
+            hardTurnCount * 8 +
+            uTurnSteps * 25 +
+            sharpSteps * 8 +
+            unnamedSteps * 10 +
             steepCount * 3;
 
         candidates.push({
@@ -282,6 +285,7 @@ function pickSafestRoute(geojson) {
             penalty,
             hairpinCount,
             sharpTurnCount,
+            hardTurnCount,
             uTurnSteps,
             sharpSteps,
             unnamedSteps,
@@ -292,9 +296,9 @@ function pickSafestRoute(geojson) {
     // Find shortest distance for distance penalty
     const shortestDist = Math.min(...candidates.map(c => c.summary.distance));
 
-    // Add distance penalty (5 pts per extra km — heavily penalize detours)
+    // Add distance penalty (2 pts per extra km — mild, safety over distance)
     for (const c of candidates) {
-        c.distancePenalty = ((c.summary.distance - shortestDist) / 1000) * 5;
+        c.distancePenalty = ((c.summary.distance - shortestDist) / 1000) * 2;
         c.totalScore = c.penalty + c.distancePenalty;
     }
 
@@ -311,9 +315,10 @@ function pickSafestRoute(geojson) {
         const time = formatDuration(c.summary.duration);
         const issues = [];
         if (c.hairpinCount > 0) issues.push(`${c.hairpinCount} hairpin`);
-        if (c.sharpTurnCount > 0) issues.push(`${c.sharpTurnCount} sharp turn`);
+        if (c.sharpTurnCount > 0) issues.push(`${c.sharpTurnCount} sharp`);
+        if (c.hardTurnCount > 0) issues.push(`${c.hardTurnCount} hard turn`);
         if (c.uTurnSteps > 0) issues.push(`${c.uTurnSteps} U-turn`);
-        if (c.unnamedSteps > 0) issues.push(`${c.unnamedSteps} unnamed road`);
+        if (c.unnamedSteps > 0) issues.push(`${c.unnamedSteps} backroad`);
         if (c.steepCount > 0) issues.push(`${c.steepCount} steep`);
         const issueStr = issues.length > 0 ? issues.join(', ') : 'no issues';
         const label = isBest ? '✓' : ' ';
@@ -722,7 +727,7 @@ function detectHairpinTurns(geojson) {
     if (coords.length < 3) return [];
 
     const turns = [];
-    const minSegLen = 15; // meters — skip GPS jitter
+    const minSegLen = 10; // meters — skip GPS jitter
 
     for (let i = 1; i < coords.length - 1; i++) {
         const prev = L.latLng(coords[i - 1][1], coords[i - 1][0]);
@@ -739,9 +744,19 @@ function detectHairpinTurns(geojson) {
         let turnAngle = Math.abs(bearing2 - bearing1);
         if (turnAngle > 180) turnAngle = 360 - turnAngle;
 
-        if (turnAngle >= 120) {
+        // For a 34ft RV:
+        // > 150° = hairpin / U-turn — nearly impossible
+        // > 110° = very sharp — dangerous, likely need multiple maneuvers
+        // > 90° = hard turn — difficult with a long RV, should warn
+        if (turnAngle >= 90) {
             // Find approach point: walk ~80m back along the route from the turn
             const approach = _findApproachPoint(coords, i, 80);
+
+            // Classify severity
+            let type;
+            if (turnAngle >= 150) type = 'hairpin';
+            else if (turnAngle >= 110) type = 'sharp';
+            else type = 'hard'; // 90-110°
 
             // De-dupe within 50m
             const lastTurn = turns.length > 0 ? turns[turns.length - 1] : null;
@@ -751,7 +766,7 @@ function detectHairpinTurns(geojson) {
                         lat: coords[i][1],
                         lon: coords[i][0],
                         angle: turnAngle,
-                        type: turnAngle >= 150 ? 'hairpin' : 'sharp',
+                        type,
                         approachLat: approach[1],
                         approachLon: approach[0],
                     };
@@ -762,7 +777,7 @@ function detectHairpinTurns(geojson) {
                 lat: coords[i][1],
                 lon: coords[i][0],
                 angle: turnAngle,
-                type: turnAngle >= 150 ? 'hairpin' : 'sharp',
+                type,
                 approachLat: approach[1],
                 approachLon: approach[0],
             });
