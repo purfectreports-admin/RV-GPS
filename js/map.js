@@ -366,7 +366,7 @@ function clearHairpinMarkers() {
 // --- Roadblocks ---
 
 function addRoadblock(latlng) {
-    const radius = 60; // meters — small enough to block a road segment
+    const radius = 25; // meters — block a road segment without killing the intersection
 
     const icon = L.divIcon({
         className: '',
