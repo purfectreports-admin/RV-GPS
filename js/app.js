@@ -148,37 +148,35 @@ async function onPlanRoute() {
         let hairpinTurns = [];
         if (hgvResult) {
             hairpinTurns = detectHairpinTurns(hgvResult.geojson);
-            const dangerousTurns = hairpinTurns.filter(t => t.type === 'hairpin' || t.type === 'sharp');
 
-            if (dangerousTurns.length > 0) {
-                showLoading(`Found ${dangerousTurns.length} dangerous turn${dangerousTurns.length > 1 ? 's' : ''}, finding safer route...`);
+            if (hairpinTurns.length > 0) {
+                showLoading(`Found ${hairpinTurns.length} tight turn${hairpinTurns.length > 1 ? 's' : ''}, finding safer route...`);
 
-                // Block approach roads for dangerous turns only (not hard turns)
+                // Block approach roads for ALL detected turns (>=90°)
                 const avoidPolys = (userAvoidPolygons || []).slice();
-                for (const t of dangerousTurns) {
-                    avoidPolys.push(createAvoidancePolygon(t.approachLat, t.approachLon, 30));
+                for (const t of hairpinTurns) {
+                    avoidPolys.push(createAvoidancePolygon(t.approachLat, t.approachLon, 40));
                 }
 
                 try {
                     const saferResult = await planRoute(startLatLng, endLatLng, viaPoints, avoidPolys);
                     if (saferResult.hgvResult) {
                         const saferTurns = detectHairpinTurns(saferResult.hgvResult.geojson);
-                        const saferDangerous = saferTurns.filter(t => t.type === 'hairpin' || t.type === 'sharp');
 
-                        // Keep the safer route if it has fewer dangerous turns
-                        // Only reject if it's absurdly long (>4x car distance)
+                        // Keep the safer route if it has fewer turns
+                        // Only reject if it's absurdly long (>5x car distance)
                         const carDist = carResult ? carResult.summary.distance : Infinity;
                         const saferDist = saferResult.hgvResult.summary.distance;
-                        const tooLong = saferDist > carDist * 4;
+                        const tooLong = saferDist > carDist * 5;
 
-                        if (saferDangerous.length < dangerousTurns.length && !tooLong) {
-                            console.log(`Safer route: ${dangerousTurns.length} → ${saferDangerous.length} dangerous turns, ${(saferDist/1609).toFixed(1)} mi`);
+                        if (saferTurns.length < hairpinTurns.length && !tooLong) {
+                            console.log(`Safer route: ${hairpinTurns.length} → ${saferTurns.length} tight turns, ${(saferDist/1609).toFixed(1)} mi`);
                             hgvResult = saferResult.hgvResult;
                             if (saferResult.carResult) carResult = saferResult.carResult;
                             hgvError = saferResult.hgvError;
                             hairpinTurns = saferTurns;
-                            const avoided = dangerousTurns.length - saferDangerous.length;
-                            showToast(`Avoided ${avoided} dangerous turn${avoided > 1 ? 's' : ''} — safer route found`, 'success');
+                            const avoided = hairpinTurns.length;
+                            showToast(`Found safer route avoiding tight turns`, 'success');
                         } else if (tooLong) {
                             console.warn('Safer route too long, keeping original with warnings');
                         } else {
@@ -203,10 +201,7 @@ async function onPlanRoute() {
 
         if (hairpinTurns.length > 0) {
             addHairpinMarkers(hairpinTurns);
-            const dangerous = hairpinTurns.filter(t => t.type === 'hairpin' || t.type === 'sharp');
-            if (dangerous.length > 0) {
-                showToast(`${dangerous.length} sharp turn${dangerous.length > 1 ? 's' : ''} remain — use Block to avoid`, 'warning');
-            }
+            showToast(`${hairpinTurns.length} tight turn${hairpinTurns.length > 1 ? 's' : ''} remain — use Block to avoid`, 'warning');
         } else {
             clearHairpinMarkers();
         }
