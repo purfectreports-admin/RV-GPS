@@ -162,20 +162,25 @@ async function onPlanRoute() {
                 const startPt = L.latLng(startLatLng.lat, startLatLng.lng);
                 const endPt = L.latLng(endLatLng.lat, endLatLng.lng);
                 for (const t of dangerousTurns) {
+                    const turnPt = L.latLng(t.lat, t.lon);
                     const approachPt = L.latLng(t.approachLat, t.approachLon);
-                    const nearStart = approachPt.distanceTo(startPt) < 200;
-                    const nearEnd = approachPt.distanceTo(endPt) < 200;
+                    const contPt = L.latLng(t.continuationLat, t.continuationLon);
+                    const nearStart = turnPt.distanceTo(startPt) < 300;
+                    const nearEnd = turnPt.distanceTo(endPt) < 300;
 
-                    if (nearStart || nearEnd) {
-                        // Approach is too close to start/end — blocking it would block
-                        // our departure/arrival. Block the continuation road AFTER the turn.
-                        // This forces ORS to find a path that doesn't go THROUGH the turn.
-                        console.log(`[Turn Avoidance] Approach near ${nearStart ? 'start' : 'end'} (${approachPt.distanceTo(nearStart ? startPt : endPt).toFixed(0)}m), blocking continuation road instead`);
-                        avoidPolys.push(createAvoidancePolygon(t.continuationLat, t.continuationLon, 50));
-                        console.log(`[Turn Avoidance] Blocked continuation at ${t.continuationLat.toFixed(5)},${t.continuationLon.toFixed(5)} r=50m`);
-                    } else {
-                        avoidPolys.push(createAvoidancePolygon(t.approachLat, t.approachLon, 50));
-                        console.log(`[Turn Avoidance] Blocked approach at ${t.approachLat.toFixed(5)},${t.approachLon.toFixed(5)} r=50m`);
+                    // Always block the turn point itself with a large radius
+                    // to ensure ORS can't find any path through this intersection
+                    avoidPolys.push(createAvoidancePolygon(t.lat, t.lon, 150));
+                    console.log(`[Turn Avoidance] Blocked turn point at ${t.lat.toFixed(5)},${t.lon.toFixed(5)} r=150m`);
+
+                    // Block the continuation road (after the turn) with large radius
+                    avoidPolys.push(createAvoidancePolygon(t.continuationLat, t.continuationLon, 200));
+                    console.log(`[Turn Avoidance] Blocked continuation at ${t.continuationLat.toFixed(5)},${t.continuationLon.toFixed(5)} r=200m`);
+
+                    // Also block approach if it's not too close to start/end
+                    if (!nearStart && !nearEnd) {
+                        avoidPolys.push(createAvoidancePolygon(t.approachLat, t.approachLon, 150));
+                        console.log(`[Turn Avoidance] Blocked approach at ${t.approachLat.toFixed(5)},${t.approachLon.toFixed(5)} r=150m`);
                     }
                     console.log(`[Turn Avoidance] For ${t.type}(${t.angle}°) turn at ${t.lat.toFixed(5)},${t.lon.toFixed(5)}`);
                 }
@@ -190,30 +195,51 @@ async function onPlanRoute() {
                         console.log(`[Turn Avoidance] Safer route: ${saferDangerous.length} dangerous turns (was ${dangerousTurns.length}), ${(saferDist/1609).toFixed(1)} mi, ${saferTurns.length} total turns`);
                         console.log('[Turn Avoidance] Safer route turns:', saferTurns.map(t => `${t.type}(${t.angle}°) at ${t.lat.toFixed(5)},${t.lon.toFixed(5)}`));
 
-                        // Accept if fewer dangerous turns (hairpin + sharp)
-                        // Don't care about hard turns or distance — safety first
-                        if (saferDangerous.length < dangerousTurns.length) {
-                            console.log(`[Turn Avoidance] ACCEPTED: ${dangerousTurns.length} → ${saferDangerous.length} dangerous turns`);
+                        // Verify the re-route doesn't still pass through the original turn area
+                        // If any point on the new route is within 100m of an original dangerous turn,
+                        // ORS just snuck through with slightly different geometry — reject it
+                        const saferCoords = getRouteCoordinates(saferResult.hgvResult.geojson);
+                        let stillPassesThroughTurn = false;
+                        for (const orig of dangerousTurns) {
+                            const origPt = L.latLng(orig.lat, orig.lon);
+                            for (let ci = 0; ci < saferCoords.length; ci += 3) { // sample every 3rd point for speed
+                                const rPt = L.latLng(saferCoords[ci][1], saferCoords[ci][0]);
+                                if (rPt.distanceTo(origPt) < 100) {
+                                    stillPassesThroughTurn = true;
+                                    console.log(`[Turn Avoidance] Re-route still passes within 100m of original turn at ${orig.lat.toFixed(5)},${orig.lon.toFixed(5)}`);
+                                    break;
+                                }
+                            }
+                            if (stillPassesThroughTurn) break;
+                        }
+
+                        // Accept if fewer dangerous turns AND actually avoids the original turn area
+                        if (saferDangerous.length < dangerousTurns.length && !stillPassesThroughTurn) {
+                            console.log(`[Turn Avoidance] ACCEPTED: ${dangerousTurns.length} → ${saferDangerous.length} dangerous turns, truly avoids original area`);
                             hgvResult = saferResult.hgvResult;
                             if (saferResult.carResult) carResult = saferResult.carResult;
                             hgvError = saferResult.hgvError;
                             hairpinTurns = saferTurns;
                             showToast(`Found safer route avoiding ${dangerousTurns.length - saferDangerous.length} dangerous turn${dangerousTurns.length - saferDangerous.length > 1 ? 's' : ''}`, 'success');
                         } else {
+                            if (stillPassesThroughTurn) {
+                                console.log('[Turn Avoidance] REJECTED: re-route still passes through original turn area despite fewer detected turns');
+                            }
                             console.log(`[Turn Avoidance] REJECTED: safer route still has ${saferDangerous.length} dangerous turns (was ${dangerousTurns.length})`);
                             // Even if same count, the avoidance polygon should have forced a different path
                             // If ORS returned same route despite avoidance, the polygon missed the road
                             // Try with larger radius on the turn point itself as fallback
                             if (saferDangerous.length === dangerousTurns.length) {
-                                console.log('[Turn Avoidance] Trying fallback: blocking turn + continuation + approach with larger radius...');
+                                console.log('[Turn Avoidance] Trying fallback: massive blocking around turn area...');
                                 const fallbackPolys = (userAvoidPolygons || []).slice();
                                 for (const t of dangerousTurns) {
-                                    // Block the turn point, continuation road, AND approach with larger polygons
-                                    fallbackPolys.push(createAvoidancePolygon(t.lat, t.lon, 80));
-                                    fallbackPolys.push(createAvoidancePolygon(t.continuationLat, t.continuationLon, 80));
-                                    const ap = L.latLng(t.approachLat, t.approachLon);
-                                    if (ap.distanceTo(startPt) > 200 && ap.distanceTo(endPt) > 200) {
-                                        fallbackPolys.push(createAvoidancePolygon(t.approachLat, t.approachLon, 60));
+                                    // Block a massive area around the turn — 300m on turn, 300m on continuation
+                                    // This is aggressive but the user said safety is the only priority
+                                    fallbackPolys.push(createAvoidancePolygon(t.lat, t.lon, 300));
+                                    fallbackPolys.push(createAvoidancePolygon(t.continuationLat, t.continuationLon, 300));
+                                    const tp = L.latLng(t.lat, t.lon);
+                                    if (tp.distanceTo(startPt) > 400 && tp.distanceTo(endPt) > 400) {
+                                        fallbackPolys.push(createAvoidancePolygon(t.approachLat, t.approachLon, 200));
                                     }
                                 }
                                 try {
