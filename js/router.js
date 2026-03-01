@@ -765,6 +765,9 @@ function detectHairpinTurns(geojson) {
             else if (turnAngle >= 110) type = 'sharp';
             else type = 'hard'; // 90-110°
 
+            // Find continuation point: walk ~80m FORWARD from the turn
+            const continuation = _findContinuationPoint(coords, i, 80);
+
             // De-dupe within 50m
             const lastTurn = turns.length > 0 ? turns[turns.length - 1] : null;
             if (lastTurn && curr.distanceTo(L.latLng(lastTurn.lat, lastTurn.lon)) < 50) {
@@ -776,6 +779,8 @@ function detectHairpinTurns(geojson) {
                         type,
                         approachLat: approach[1],
                         approachLon: approach[0],
+                        continuationLat: continuation[1],
+                        continuationLon: continuation[0],
                     };
                 }
                 continue;
@@ -787,11 +792,32 @@ function detectHairpinTurns(geojson) {
                 type,
                 approachLat: approach[1],
                 approachLon: approach[0],
+                continuationLat: continuation[1],
+                continuationLon: continuation[0],
             });
         }
     }
 
     return turns;
+}
+
+// Walk FORWARD along route coords from index `turnIdx` for ~targetMeters,
+// return the [lon, lat] coordinate on the road AFTER the turn (the continuation).
+function _findContinuationPoint(coords, turnIdx, targetMeters) {
+    let remaining = targetMeters;
+    for (let j = turnIdx; j < coords.length - 1; j++) {
+        const a = L.latLng(coords[j][1], coords[j][0]);
+        const b = L.latLng(coords[j + 1][1], coords[j + 1][0]);
+        const segDist = a.distanceTo(b);
+        if (segDist >= remaining) {
+            const frac = remaining / segDist;
+            const lat = coords[j][1] + frac * (coords[j + 1][1] - coords[j][1]);
+            const lon = coords[j][0] + frac * (coords[j + 1][0] - coords[j][0]);
+            return [lon, lat];
+        }
+        remaining -= segDist;
+    }
+    return [coords[coords.length - 1][0], coords[coords.length - 1][1]];
 }
 
 // Walk backwards along route coords from index `turnIdx` for ~targetMeters,

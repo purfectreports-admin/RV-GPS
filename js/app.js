@@ -144,43 +144,97 @@ async function onPlanRoute() {
 
         // --- Single-pass sharp turn avoidance ---
         // Detect turns, try ONE re-route blocking approach roads.
-        // Keep the re-route if it's cleaner, even if much longer.
+        // Accept the re-route if it has fewer DANGEROUS turns (hairpin/sharp >=110°),
+        // even if it has more mild hard turns (90-110°) or is much longer.
         let hairpinTurns = [];
         if (hgvResult) {
             hairpinTurns = detectHairpinTurns(hgvResult.geojson);
+            const dangerousTurns = hairpinTurns.filter(t => t.type === 'hairpin' || t.type === 'sharp');
 
-            if (hairpinTurns.length > 0) {
-                showLoading(`Found ${hairpinTurns.length} tight turn${hairpinTurns.length > 1 ? 's' : ''}, finding safer route...`);
+            if (dangerousTurns.length > 0) {
+                showLoading(`Found ${dangerousTurns.length} dangerous turn${dangerousTurns.length > 1 ? 's' : ''}, finding safer route...`);
+                console.log('[Turn Avoidance] Original route turns:', hairpinTurns.map(t => `${t.type}(${t.angle}°) at ${t.lat.toFixed(5)},${t.lon.toFixed(5)} approach=${t.approachLat.toFixed(5)},${t.approachLon.toFixed(5)}`));
 
-                // Block approach roads for ALL detected turns (>=90°)
+                // Block approach roads for dangerous turns only (hairpin + sharp)
+                // Special handling: if approach is near the start/end point, block the
+                // CONTINUATION road AFTER the turn instead, to avoid making routing impossible
                 const avoidPolys = (userAvoidPolygons || []).slice();
-                for (const t of hairpinTurns) {
-                    avoidPolys.push(createAvoidancePolygon(t.approachLat, t.approachLon, 40));
+                const startPt = L.latLng(startLatLng.lat, startLatLng.lng);
+                const endPt = L.latLng(endLatLng.lat, endLatLng.lng);
+                for (const t of dangerousTurns) {
+                    const approachPt = L.latLng(t.approachLat, t.approachLon);
+                    const nearStart = approachPt.distanceTo(startPt) < 200;
+                    const nearEnd = approachPt.distanceTo(endPt) < 200;
+
+                    if (nearStart || nearEnd) {
+                        // Approach is too close to start/end — blocking it would block
+                        // our departure/arrival. Block the continuation road AFTER the turn.
+                        // This forces ORS to find a path that doesn't go THROUGH the turn.
+                        console.log(`[Turn Avoidance] Approach near ${nearStart ? 'start' : 'end'} (${approachPt.distanceTo(nearStart ? startPt : endPt).toFixed(0)}m), blocking continuation road instead`);
+                        avoidPolys.push(createAvoidancePolygon(t.continuationLat, t.continuationLon, 50));
+                        console.log(`[Turn Avoidance] Blocked continuation at ${t.continuationLat.toFixed(5)},${t.continuationLon.toFixed(5)} r=50m`);
+                    } else {
+                        avoidPolys.push(createAvoidancePolygon(t.approachLat, t.approachLon, 50));
+                        console.log(`[Turn Avoidance] Blocked approach at ${t.approachLat.toFixed(5)},${t.approachLon.toFixed(5)} r=50m`);
+                    }
+                    console.log(`[Turn Avoidance] For ${t.type}(${t.angle}°) turn at ${t.lat.toFixed(5)},${t.lon.toFixed(5)}`);
                 }
 
                 try {
                     const saferResult = await planRoute(startLatLng, endLatLng, viaPoints, avoidPolys);
                     if (saferResult.hgvResult) {
                         const saferTurns = detectHairpinTurns(saferResult.hgvResult.geojson);
-
-                        // Keep the safer route if it has fewer turns
-                        // Only reject if it's absurdly long (>5x car distance)
-                        const carDist = carResult ? carResult.summary.distance : Infinity;
+                        const saferDangerous = saferTurns.filter(t => t.type === 'hairpin' || t.type === 'sharp');
                         const saferDist = saferResult.hgvResult.summary.distance;
-                        const tooLong = saferDist > carDist * 5;
 
-                        if (saferTurns.length < hairpinTurns.length && !tooLong) {
-                            console.log(`Safer route: ${hairpinTurns.length} → ${saferTurns.length} tight turns, ${(saferDist/1609).toFixed(1)} mi`);
+                        console.log(`[Turn Avoidance] Safer route: ${saferDangerous.length} dangerous turns (was ${dangerousTurns.length}), ${(saferDist/1609).toFixed(1)} mi, ${saferTurns.length} total turns`);
+                        console.log('[Turn Avoidance] Safer route turns:', saferTurns.map(t => `${t.type}(${t.angle}°) at ${t.lat.toFixed(5)},${t.lon.toFixed(5)}`));
+
+                        // Accept if fewer dangerous turns (hairpin + sharp)
+                        // Don't care about hard turns or distance — safety first
+                        if (saferDangerous.length < dangerousTurns.length) {
+                            console.log(`[Turn Avoidance] ACCEPTED: ${dangerousTurns.length} → ${saferDangerous.length} dangerous turns`);
                             hgvResult = saferResult.hgvResult;
                             if (saferResult.carResult) carResult = saferResult.carResult;
                             hgvError = saferResult.hgvError;
                             hairpinTurns = saferTurns;
-                            const avoided = hairpinTurns.length;
-                            showToast(`Found safer route avoiding tight turns`, 'success');
-                        } else if (tooLong) {
-                            console.warn('Safer route too long, keeping original with warnings');
+                            showToast(`Found safer route avoiding ${dangerousTurns.length - saferDangerous.length} dangerous turn${dangerousTurns.length - saferDangerous.length > 1 ? 's' : ''}`, 'success');
                         } else {
-                            console.log('Re-route has same or more turns, keeping original');
+                            console.log(`[Turn Avoidance] REJECTED: safer route still has ${saferDangerous.length} dangerous turns (was ${dangerousTurns.length})`);
+                            // Even if same count, the avoidance polygon should have forced a different path
+                            // If ORS returned same route despite avoidance, the polygon missed the road
+                            // Try with larger radius on the turn point itself as fallback
+                            if (saferDangerous.length === dangerousTurns.length) {
+                                console.log('[Turn Avoidance] Trying fallback: blocking turn + continuation + approach with larger radius...');
+                                const fallbackPolys = (userAvoidPolygons || []).slice();
+                                for (const t of dangerousTurns) {
+                                    // Block the turn point, continuation road, AND approach with larger polygons
+                                    fallbackPolys.push(createAvoidancePolygon(t.lat, t.lon, 80));
+                                    fallbackPolys.push(createAvoidancePolygon(t.continuationLat, t.continuationLon, 80));
+                                    const ap = L.latLng(t.approachLat, t.approachLon);
+                                    if (ap.distanceTo(startPt) > 200 && ap.distanceTo(endPt) > 200) {
+                                        fallbackPolys.push(createAvoidancePolygon(t.approachLat, t.approachLon, 60));
+                                    }
+                                }
+                                try {
+                                    const fallbackResult = await planRoute(startLatLng, endLatLng, viaPoints, fallbackPolys);
+                                    if (fallbackResult.hgvResult) {
+                                        const fbTurns = detectHairpinTurns(fallbackResult.hgvResult.geojson);
+                                        const fbDangerous = fbTurns.filter(t => t.type === 'hairpin' || t.type === 'sharp');
+                                        const fbDist = fallbackResult.hgvResult.summary.distance;
+                                        console.log(`[Turn Avoidance] Fallback: ${fbDangerous.length} dangerous turns, ${(fbDist/1609).toFixed(1)} mi`);
+                                        if (fbDangerous.length < dangerousTurns.length) {
+                                            hgvResult = fallbackResult.hgvResult;
+                                            if (fallbackResult.carResult) carResult = fallbackResult.carResult;
+                                            hgvError = fallbackResult.hgvError;
+                                            hairpinTurns = fbTurns;
+                                            showToast(`Found safer route avoiding dangerous turns`, 'success');
+                                        }
+                                    }
+                                } catch (e2) {
+                                    console.warn('[Turn Avoidance] Fallback also failed:', e2.message);
+                                }
+                            }
                         }
                     }
                 } catch (e) {
