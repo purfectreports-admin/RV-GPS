@@ -427,15 +427,22 @@ async function planRoute(start, end, viaPoints, avoidPolygons) {
         const altHgv = (altResult.status === 'fulfilled' && altResult.value) ? altResult.value : null;
 
         if (altHgv && stdHgv) {
-            // Pick whichever is shorter, unless the alternative avoids significantly more hazards
-            const altDist = altHgv.summary.distance;
-            const stdDist = stdHgv.summary.distance;
-            if (altDist > stdDist * 1.5) {
-                // Alternative is >50% longer — prefer standard route
-                console.warn(`Alternative route too long (${(altDist/1609).toFixed(1)} mi vs ${(stdDist/1609).toFixed(1)} mi) — using standard HGV`);
-                hgvResult = stdHgv;
-            } else {
+            // Compare safety scores — prefer the one with fewer dangerous turns
+            const altTurns = detectHairpinTurns(altHgv.geojson);
+            const stdTurns = detectHairpinTurns(stdHgv.geojson);
+            const altDanger = altTurns.filter(t => t.type === 'hairpin' || t.type === 'sharp').length;
+            const stdDanger = stdTurns.filter(t => t.type === 'hairpin' || t.type === 'sharp').length;
+
+            if (altDanger < stdDanger) {
+                // Alternative is safer — use it even if longer
+                console.log(`Alternative safer: ${stdDanger} → ${altDanger} dangerous turns`);
                 hgvResult = altHgv;
+            } else if (altDanger === stdDanger) {
+                // Same safety, pick shorter
+                hgvResult = altHgv.summary.distance <= stdHgv.summary.distance ? altHgv : stdHgv;
+            } else {
+                // Standard is safer
+                hgvResult = stdHgv;
             }
         } else if (altHgv) {
             hgvResult = altHgv;

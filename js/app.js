@@ -142,9 +142,54 @@ async function onPlanRoute() {
         const userAvoidPolygons = roadblockPolys.length > 0 ? roadblockPolys : undefined;
         let { hgvResult, carResult, hgvError } = await planRoute(startLatLng, endLatLng, viaPoints, userAvoidPolygons);
 
-        // Detect sharp turns for warnings (no automatic re-routing — that causes cascading failures)
-        const finalGeojson = hgvResult ? hgvResult.geojson : (carResult ? carResult.geojson : null);
-        const hairpinTurns = finalGeojson ? detectHairpinTurns(finalGeojson) : [];
+        // --- Single-pass sharp turn avoidance ---
+        // Detect turns, try ONE re-route blocking approach roads.
+        // Keep the re-route if it's cleaner, even if much longer.
+        let hairpinTurns = [];
+        if (hgvResult) {
+            hairpinTurns = detectHairpinTurns(hgvResult.geojson);
+            const dangerousTurns = hairpinTurns.filter(t => t.type === 'hairpin' || t.type === 'sharp');
+
+            if (dangerousTurns.length > 0) {
+                showLoading(`Found ${dangerousTurns.length} dangerous turn${dangerousTurns.length > 1 ? 's' : ''}, finding safer route...`);
+
+                // Block approach roads for dangerous turns only (not hard turns)
+                const avoidPolys = (userAvoidPolygons || []).slice();
+                for (const t of dangerousTurns) {
+                    avoidPolys.push(createAvoidancePolygon(t.approachLat, t.approachLon, 30));
+                }
+
+                try {
+                    const saferResult = await planRoute(startLatLng, endLatLng, viaPoints, avoidPolys);
+                    if (saferResult.hgvResult) {
+                        const saferTurns = detectHairpinTurns(saferResult.hgvResult.geojson);
+                        const saferDangerous = saferTurns.filter(t => t.type === 'hairpin' || t.type === 'sharp');
+
+                        // Keep the safer route if it has fewer dangerous turns
+                        // Only reject if it's absurdly long (>4x car distance)
+                        const carDist = carResult ? carResult.summary.distance : Infinity;
+                        const saferDist = saferResult.hgvResult.summary.distance;
+                        const tooLong = saferDist > carDist * 4;
+
+                        if (saferDangerous.length < dangerousTurns.length && !tooLong) {
+                            console.log(`Safer route: ${dangerousTurns.length} → ${saferDangerous.length} dangerous turns, ${(saferDist/1609).toFixed(1)} mi`);
+                            hgvResult = saferResult.hgvResult;
+                            if (saferResult.carResult) carResult = saferResult.carResult;
+                            hgvError = saferResult.hgvError;
+                            hairpinTurns = saferTurns;
+                            const avoided = dangerousTurns.length - saferDangerous.length;
+                            showToast(`Avoided ${avoided} dangerous turn${avoided > 1 ? 's' : ''} — safer route found`, 'success');
+                        } else if (tooLong) {
+                            console.warn('Safer route too long, keeping original with warnings');
+                        } else {
+                            console.log('Re-route has same or more turns, keeping original');
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Safer route attempt failed:', e.message);
+                }
+            }
+        }
 
         // Display routes on map
         clearRoutes();
@@ -158,7 +203,10 @@ async function onPlanRoute() {
 
         if (hairpinTurns.length > 0) {
             addHairpinMarkers(hairpinTurns);
-            showToast(`${hairpinTurns.length} sharp turn${hairpinTurns.length > 1 ? 's' : ''} detected — use Block to avoid`, 'warning');
+            const dangerous = hairpinTurns.filter(t => t.type === 'hairpin' || t.type === 'sharp');
+            if (dangerous.length > 0) {
+                showToast(`${dangerous.length} sharp turn${dangerous.length > 1 ? 's' : ''} remain — use Block to avoid`, 'warning');
+            }
         } else {
             clearHairpinMarkers();
         }
