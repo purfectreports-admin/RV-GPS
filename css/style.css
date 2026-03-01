@@ -1086,6 +1086,31 @@ html, body {
 .hairpin-marker { background: #dc2626; border-radius: 50%; }
 .sharp-turn-marker { background: #ea580c; border-radius: 50%; }
 
+/* --- Roadblock markers --- */
+.roadblock-marker {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: #dc2626; color: #fff; font-weight: bold; font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+    border: 3px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+    cursor: pointer;
+}
+.btn-roadblock { position: relative; }
+.btn-roadblock.active {
+    background: #dc2626 !important;
+    color: #fff !important;
+    border-color: #dc2626 !important;
+}
+.roadblock-badge {
+    position: absolute; top: -6px; right: -6px;
+    background: #dc2626; color: #fff; font-size: 11px; font-weight: bold;
+    width: 18px; height: 18px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    border: 2px solid var(--color-surface);
+}
+.btn-roadblock.active .roadblock-badge {
+    background: #fff; color: #dc2626;
+}
+
 /* --- Quota indicator --- */
 .quota-bar {
     font-size: 11px;

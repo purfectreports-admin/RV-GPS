@@ -82,12 +82,16 @@ function wireSearchPanel() {
     // Swap (delegate to map.js swapPoints which handles markers + waypoints)
     btnSwap.addEventListener('click', () => swapPoints());
 
+    // Block Road toggle
+    document.getElementById('btn-roadblock').addEventListener('click', toggleRoadblockMode);
+
     // Clear
     btnClear.addEventListener('click', () => {
         clearAll();
         hideElevationProfile();
         _currentHgvGeojson = null;
         clickMode = 'start';
+        document.getElementById('btn-roadblock').classList.remove('active');
         expandSearchPanel();
     });
 
@@ -119,6 +123,13 @@ async function onPlanRoute() {
         return;
     }
 
+    // Exit roadblock mode if active
+    if (clickMode === 'roadblock') {
+        clickMode = 'waypoint';
+        document.getElementById('btn-roadblock').classList.remove('active');
+        updateClickHint();
+    }
+
     showLoading('Analyzing routes for safest path...');
     clearRoutes();
     clearRestrictions();
@@ -127,13 +138,15 @@ async function onPlanRoute() {
 
     try {
         const viaPoints = getWaypointLatLngs();
-        let { hgvResult, carResult, hgvError } = await planRoute(startLatLng, endLatLng, viaPoints);
+        const roadblockPolys = getRoadblockPolygons();
+        const userAvoidPolygons = roadblockPolys.length > 0 ? roadblockPolys : undefined;
+        let { hgvResult, carResult, hgvError } = await planRoute(startLatLng, endLatLng, viaPoints, userAvoidPolygons);
 
         // --- Iterative hairpin avoidance ---
         // Only avoid true hairpins (>150° turns), not all sharp turns.
         // Sanity check: if avoidance makes route >2x car distance, keep original.
         const MAX_HAIRPIN_RETRIES = 2;
-        let hairpinAvoidPolygons = [];
+        let hairpinAvoidPolygons = roadblockPolys.slice(); // start with user roadblocks
         let hairpinTurns = [];
         let avoidedCount = 0;
         const carDist = carResult ? carResult.summary.distance : Infinity;

@@ -13,7 +13,9 @@ let hairpinLayer = null;
 let startLatLng = null;
 let endLatLng = null;
 let waypoints = []; // Array of {latlng, marker} for intermediate stops
-let clickMode = 'start'; // 'start', 'end', or 'waypoint'
+let clickMode = 'start'; // 'start', 'end', 'waypoint', or 'roadblock'
+let roadblockLayer = null;
+let roadblocks = []; // Array of {latlng, marker, circle}
 
 function initMap() {
     map = L.map('map', {
@@ -32,6 +34,7 @@ function initMap() {
     map.on('click', onMapClick);
     restrictionLayer = L.layerGroup().addTo(map);
     hairpinLayer = L.layerGroup().addTo(map);
+    roadblockLayer = L.layerGroup().addTo(map);
 }
 
 function updateTileLayer() {
@@ -43,6 +46,10 @@ function updateTileLayer() {
 }
 
 function onMapClick(e) {
+    if (clickMode === 'roadblock') {
+        addRoadblock(e.latlng);
+        return;
+    }
     if (clickMode === 'start') {
         setStartPoint(e.latlng);
         clickMode = 'end';
@@ -59,6 +66,10 @@ function onMapClick(e) {
 
 function updateClickHint() {
     const hint = document.getElementById('click-hint');
+    if (clickMode === 'roadblock') {
+        hint.textContent = `Block mode: click roads to block them. ${roadblocks.length} active. Tap block to remove.`;
+        return;
+    }
     if (!startLatLng && !endLatLng) {
         hint.textContent = 'Click the map to set start (A) and end (B) points';
     } else if (startLatLng && !endLatLng) {
@@ -251,6 +262,7 @@ function clearAll() {
     clearRoutes();
     clearRestrictions();
     clearHairpinMarkers();
+    clearRoadblocks();
     document.getElementById('input-start').value = '';
     document.getElementById('input-end').value = '';
     document.getElementById('route-summary').hidden = true;
@@ -349,6 +361,84 @@ function addHairpinMarkers(turns) {
 
 function clearHairpinMarkers() {
     if (hairpinLayer) hairpinLayer.clearLayers();
+}
+
+// --- Roadblocks ---
+
+function addRoadblock(latlng) {
+    const radius = 60; // meters — small enough to block a road segment
+
+    const icon = L.divIcon({
+        className: '',
+        html: '<div class="roadblock-marker">X</div>',
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+    });
+
+    const marker = L.marker(latlng, { icon }).addTo(roadblockLayer);
+    const circle = L.circle(latlng, {
+        radius: radius,
+        color: '#dc2626',
+        fillColor: '#dc2626',
+        fillOpacity: 0.2,
+        weight: 2,
+        dashArray: '4,4',
+    }).addTo(roadblockLayer);
+
+    const rb = { latlng, marker, circle, radius };
+
+    marker.bindPopup('Road blocked. Click marker to remove.');
+    marker.on('click', function (e) {
+        L.DomEvent.stopPropagation(e);
+        removeRoadblock(rb);
+    });
+
+    roadblocks.push(rb);
+    updateRoadblockCount();
+    showToast(`Road blocked. Click it to remove. ${roadblocks.length} block${roadblocks.length > 1 ? 's' : ''} active.`, 'info');
+}
+
+function removeRoadblock(rb) {
+    const idx = roadblocks.indexOf(rb);
+    if (idx === -1) return;
+    roadblockLayer.removeLayer(rb.marker);
+    roadblockLayer.removeLayer(rb.circle);
+    roadblocks.splice(idx, 1);
+    updateRoadblockCount();
+    showToast('Roadblock removed.', 'info');
+}
+
+function clearRoadblocks() {
+    if (roadblockLayer) roadblockLayer.clearLayers();
+    roadblocks = [];
+    updateRoadblockCount();
+}
+
+function getRoadblockPolygons() {
+    return roadblocks.map(rb =>
+        createAvoidancePolygon(rb.latlng.lat, rb.latlng.lng, rb.radius)
+    );
+}
+
+function updateRoadblockCount() {
+    const badge = document.getElementById('roadblock-count');
+    if (badge) {
+        badge.textContent = roadblocks.length > 0 ? roadblocks.length : '';
+        badge.hidden = roadblocks.length === 0;
+    }
+}
+
+function toggleRoadblockMode() {
+    if (clickMode === 'roadblock') {
+        // Exit roadblock mode, return to waypoint if both points set
+        clickMode = (startLatLng && endLatLng) ? 'waypoint' : (startLatLng ? 'end' : 'start');
+        document.getElementById('btn-roadblock').classList.remove('active');
+        updateClickHint();
+    } else {
+        clickMode = 'roadblock';
+        document.getElementById('btn-roadblock').classList.add('active');
+        updateClickHint();
+    }
 }
 
 function updateRouteButton() {
