@@ -161,12 +161,9 @@ async function onPlanRoute() {
             const hairpinsOnly = hairpinTurns.filter(t => t.type === 'hairpin');
             if (hairpinsOnly.length === 0) break; // No hairpins, done
 
-            // Scale avoidance radius: 80m for short routes, up to 120m for long ones
-            const routeDist = hgvResult.summary.distance;
-            const avoidRadius = routeDist > 50000 ? 120 : 80;
-
+            // Block the approach road, not the intersection itself
             for (const t of hairpinsOnly) {
-                hairpinAvoidPolygons.push(createAvoidancePolygon(t.lat, t.lon, avoidRadius));
+                hairpinAvoidPolygons.push(createAvoidancePolygon(t.approachLat, t.approachLon, 30));
             }
             avoidedCount += hairpinsOnly.length;
 
@@ -374,10 +371,8 @@ async function onAvoidAndReroute() {
             hairpinTurns2 = detectHairpinTurns(rg);
             const hpOnly = hairpinTurns2.filter(t => t.type === 'hairpin');
             if (hpOnly.length === 0) break;
-            const rd = hgvResult.summary.distance;
-            const ar = rd > 50000 ? 120 : 80;
             for (const t of hpOnly) {
-                allAvoidPolygons.push(createAvoidancePolygon(t.lat, t.lon, ar));
+                allAvoidPolygons.push(createAvoidancePolygon(t.approachLat, t.approachLon, 30));
             }
             showLoading(`Avoiding hairpin turns, re-routing...`);
             try {

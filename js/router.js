@@ -707,15 +707,16 @@ function createAvoidancePolygon(lat, lon, radiusMeters) {
 
 // --- Hairpin / sharp turn detection ---
 // Analyzes route geometry to find turns too tight for a long RV.
-// Returns array of { lat, lon, angle, type: 'hairpin'|'sharp', distAlongRoute }
+// Returns array of { lat, lon, angle, type, approachLat, approachLon }
+// approachLat/Lon = point ~80m back along route BEFORE the turn,
+// so avoidance polygons block the approach road, not the intersection.
 
 function detectHairpinTurns(geojson) {
     const coords = getRouteCoordinates(geojson);
     if (coords.length < 3) return [];
 
     const turns = [];
-    // Minimum distance between route points to consider (skip GPS jitter)
-    const minSegLen = 15; // meters
+    const minSegLen = 15; // meters — skip GPS jitter
 
     for (let i = 1; i < coords.length - 1; i++) {
         const prev = L.latLng(coords[i - 1][1], coords[i - 1][0]);
@@ -729,24 +730,24 @@ function detectHairpinTurns(geojson) {
         const bearing1 = _bearing(prev.lat, prev.lng, curr.lat, curr.lng);
         const bearing2 = _bearing(curr.lat, curr.lng, next.lat, next.lng);
 
-        // Angle of turn: 0 = straight, 180 = full U-turn
         let turnAngle = Math.abs(bearing2 - bearing1);
         if (turnAngle > 180) turnAngle = 360 - turnAngle;
 
-        // For a 34ft RV:
-        // > 150° = hairpin / U-turn — nearly impossible
-        // > 120° = very sharp — dangerous, likely need multiple maneuvers
         if (turnAngle >= 120) {
-            // Check if this is too close to a previous detection (de-dupe within 50m)
+            // Find approach point: walk ~80m back along the route from the turn
+            const approach = _findApproachPoint(coords, i, 80);
+
+            // De-dupe within 50m
             const lastTurn = turns.length > 0 ? turns[turns.length - 1] : null;
             if (lastTurn && curr.distanceTo(L.latLng(lastTurn.lat, lastTurn.lon)) < 50) {
-                // Keep the sharper one
                 if (turnAngle > lastTurn.angle) {
                     turns[turns.length - 1] = {
                         lat: coords[i][1],
                         lon: coords[i][0],
                         angle: turnAngle,
                         type: turnAngle >= 150 ? 'hairpin' : 'sharp',
+                        approachLat: approach[1],
+                        approachLon: approach[0],
                     };
                 }
                 continue;
@@ -756,11 +757,34 @@ function detectHairpinTurns(geojson) {
                 lon: coords[i][0],
                 angle: turnAngle,
                 type: turnAngle >= 150 ? 'hairpin' : 'sharp',
+                approachLat: approach[1],
+                approachLon: approach[0],
             });
         }
     }
 
     return turns;
+}
+
+// Walk backwards along route coords from index `turnIdx` for ~targetMeters,
+// return the [lon, lat] coordinate of the approach point.
+function _findApproachPoint(coords, turnIdx, targetMeters) {
+    let remaining = targetMeters;
+    for (let j = turnIdx; j > 0; j--) {
+        const a = L.latLng(coords[j][1], coords[j][0]);
+        const b = L.latLng(coords[j - 1][1], coords[j - 1][0]);
+        const segDist = a.distanceTo(b);
+        if (segDist >= remaining) {
+            // Interpolate along this segment
+            const frac = remaining / segDist;
+            const lat = coords[j][1] + frac * (coords[j - 1][1] - coords[j][1]);
+            const lon = coords[j][0] + frac * (coords[j - 1][0] - coords[j][0]);
+            return [lon, lat];
+        }
+        remaining -= segDist;
+    }
+    // If route is shorter than targetMeters, return the start
+    return [coords[0][0], coords[0][1]];
 }
 
 // Calculate bearing between two points in degrees (0-360)
