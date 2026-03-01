@@ -157,15 +157,13 @@ async function onPlanRoute() {
             if (!routeGeojson) break;
 
             hairpinTurns = detectHairpinTurns(routeGeojson);
-            // Only avoid true hairpins (>150°), sharp turns (120-150°) just get warnings
-            const hairpinsOnly = hairpinTurns.filter(t => t.type === 'hairpin');
-            if (hairpinsOnly.length === 0) break; // No hairpins, done
+            if (hairpinTurns.length === 0) break; // Clean route, done
 
-            // Block the approach road, not the intersection itself
-            for (const t of hairpinsOnly) {
+            // Block the approach road for all sharp/hairpin turns (>120°)
+            for (const t of hairpinTurns) {
                 hairpinAvoidPolygons.push(createAvoidancePolygon(t.approachLat, t.approachLon, 30));
             }
-            avoidedCount += hairpinsOnly.length;
+            avoidedCount += hairpinTurns.length;
 
             showLoading(`Avoiding ${avoidedCount} hairpin turn${avoidedCount > 1 ? 's' : ''}, re-routing...`);
 
@@ -369,9 +367,8 @@ async function onAvoidAndReroute() {
             const rg = hgvResult ? hgvResult.geojson : null;
             if (!rg) break;
             hairpinTurns2 = detectHairpinTurns(rg);
-            const hpOnly = hairpinTurns2.filter(t => t.type === 'hairpin');
-            if (hpOnly.length === 0) break;
-            for (const t of hpOnly) {
+            if (hairpinTurns2.length === 0) break;
+            for (const t of hairpinTurns2) {
                 allAvoidPolygons.push(createAvoidancePolygon(t.approachLat, t.approachLon, 30));
             }
             showLoading(`Avoiding hairpin turns, re-routing...`);
