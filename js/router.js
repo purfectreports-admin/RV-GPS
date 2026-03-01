@@ -30,6 +30,7 @@ async function getHGVRoute(start, end, viaPoints, avoidPolygons) {
                     axleload: parseFloat(vehicle.axleload.toFixed(2)),
                 },
             },
+            avoid_features: ['unpavedroads'],
         },
         preference: 'recommended',
         units: 'm',
@@ -164,6 +165,7 @@ async function getHGVRouteWithAlternatives(start, end, avoidPolygons) {
                     axleload: parseFloat(vehicle.axleload.toFixed(2)),
                 },
             },
+            avoid_features: ['unpavedroads'],
         },
         preference: 'recommended',
         units: 'm',
@@ -254,25 +256,31 @@ function pickSafestRoute(geojson) {
         // Steep grade segments
         const steepCount = elevation ? elevation.steepSegments.length : 0;
 
-        // Count steps on unnamed roads (no road name = likely residential/backroad)
-        const unnamedSteps = steps.filter(s => !s.isWarning && !s.name && s.distance > 50).length;
+        // Count unnamed road segments — no road name = likely residential/backroad/path
+        // Weight by distance: a 50m unnamed segment is minor, a 500m one is a real backroad
+        const unnamedSegments = steps.filter(s => !s.isWarning && !s.name && s.distance > 30);
+        const unnamedSteps = unnamedSegments.length;
+        const unnamedDistance = unnamedSegments.reduce((sum, s) => sum + s.distance, 0);
 
-        // Scoring: lower is better — safety and ease over distance
-        // Hairpins (>150°): 30 pts — nearly impossible for 34ft RV
-        // Sharp turns (110-150°): 20 pts — dangerous
-        // Hard turns (90-110°): 8 pts — difficult but doable
-        // U-turn instructions: 25 pts
-        // Sharp turn instructions: 8 pts
-        // Unnamed/backroad segments: 10 pts — prefer named main roads
-        // Steep grades: 3 pts
+        // Scoring: lower is better — SAFETY IS THE ONLY PRIORITY
+        // Unnamed/backroad segments: 50 pts each + 30 pts per 100m of backroad distance
+        //   These are the worst — routing through backyards, dirt roads, unnamed paths
+        // Hairpins (>150°): 40 pts — nearly impossible for 34ft RV
+        // Sharp turns (110-150°): 25 pts — dangerous
+        // Hard turns (90-110°): 10 pts — difficult but doable
+        // U-turn instructions: 30 pts
+        // Sharp turn instructions: 10 pts
+        // Steep grades: 5 pts
+        // Distance penalty: ZERO — we don't care about distance at all
         const penalty =
-            hairpinCount * 30 +
-            sharpTurnCount * 20 +
-            hardTurnCount * 8 +
-            uTurnSteps * 25 +
-            sharpSteps * 8 +
-            unnamedSteps * 10 +
-            steepCount * 3;
+            unnamedSteps * 50 +
+            (unnamedDistance / 100) * 30 +
+            hairpinCount * 40 +
+            sharpTurnCount * 25 +
+            hardTurnCount * 10 +
+            uTurnSteps * 30 +
+            sharpSteps * 10 +
+            steepCount * 5;
 
         candidates.push({
             index: i,
@@ -289,17 +297,16 @@ function pickSafestRoute(geojson) {
             uTurnSteps,
             sharpSteps,
             unnamedSteps,
+            unnamedDistance,
             steepCount,
         });
     }
 
-    // Find shortest distance for distance penalty
-    const shortestDist = Math.min(...candidates.map(c => c.summary.distance));
-
-    // Add distance penalty (2 pts per extra km — mild, safety over distance)
+    // No distance penalty — safety is the only priority.
+    // A 2hr safe route is always better than a 1hr dangerous route.
     for (const c of candidates) {
-        c.distancePenalty = ((c.summary.distance - shortestDist) / 1000) * 2;
-        c.totalScore = c.penalty + c.distancePenalty;
+        c.distancePenalty = 0;
+        c.totalScore = c.penalty;
     }
 
     // Sort by score (lowest = safest)
@@ -318,7 +325,7 @@ function pickSafestRoute(geojson) {
         if (c.sharpTurnCount > 0) issues.push(`${c.sharpTurnCount} sharp`);
         if (c.hardTurnCount > 0) issues.push(`${c.hardTurnCount} hard turn`);
         if (c.uTurnSteps > 0) issues.push(`${c.uTurnSteps} U-turn`);
-        if (c.unnamedSteps > 0) issues.push(`${c.unnamedSteps} backroad`);
+        if (c.unnamedSteps > 0) issues.push(`${c.unnamedSteps} backroad (${(c.unnamedDistance/1000).toFixed(1)}km)`);
         if (c.steepCount > 0) issues.push(`${c.steepCount} steep`);
         const issueStr = issues.length > 0 ? issues.join(', ') : 'no issues';
         const label = isBest ? '✓' : ' ';
@@ -721,6 +728,30 @@ function createAvoidancePolygon(lat, lon, radiusMeters) {
         [lon - dLon, lat + dLat],
         [lon - dLon, lat - dLat], // close ring
     ]];
+}
+
+// --- Unnamed/backroad segment detection ---
+// Finds route segments on unnamed roads (no road name in ORS instructions).
+// Returns array of { lat, lon, distance, midLat, midLon } for avoidance.
+function detectUnnamedSegments(geojson) {
+    const steps = extractSteps(geojson);
+    const coords = getRouteCoordinates(geojson);
+    const segments = [];
+
+    for (const step of steps) {
+        if (step.isWarning) continue;
+        // Unnamed road with meaningful distance (>30m, not just a tiny connector)
+        if (!step.name && step.distance > 100 && step.lat != null && step.lon != null) {
+            segments.push({
+                lat: step.lat,
+                lon: step.lon,
+                distance: step.distance,
+                instruction: step.instruction,
+            });
+        }
+    }
+
+    return segments;
 }
 
 // --- Hairpin / sharp turn detection ---

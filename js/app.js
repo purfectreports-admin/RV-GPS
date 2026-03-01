@@ -243,6 +243,62 @@ async function onPlanRoute() {
             }
         }
 
+        // --- Backroad avoidance ---
+        // Detect unnamed road segments and try to avoid them
+        if (hgvResult) {
+            const unnamedSegs = detectUnnamedSegments(hgvResult.geojson);
+            if (unnamedSegs.length > 0) {
+                const totalUnnamed = unnamedSegs.reduce((s, seg) => s + seg.distance, 0);
+                console.log(`[Backroad Avoidance] Found ${unnamedSegs.length} unnamed segments (${(totalUnnamed/1000).toFixed(1)}km):`,
+                    unnamedSegs.map(s => `${s.instruction} (${s.distance.toFixed(0)}m) at ${s.lat.toFixed(5)},${s.lon.toFixed(5)}`));
+
+                showLoading(`Found ${unnamedSegs.length} backroad segment${unnamedSegs.length > 1 ? 's' : ''}, finding route on main roads...`);
+
+                // Build avoidance polygons for each unnamed segment
+                const backroadPolys = (userAvoidPolygons || []).slice();
+                // Also include any turn avoidance polygons that were already working
+                const startPtBR = L.latLng(startLatLng.lat, startLatLng.lng);
+                const endPtBR = L.latLng(endLatLng.lat, endLatLng.lng);
+
+                for (const seg of unnamedSegs) {
+                    const segPt = L.latLng(seg.lat, seg.lon);
+                    // Don't block near start/end
+                    if (segPt.distanceTo(startPtBR) < 150 || segPt.distanceTo(endPtBR) < 150) {
+                        console.log(`[Backroad Avoidance] Skipping segment near start/end: ${seg.instruction}`);
+                        continue;
+                    }
+                    // Scale radius with segment length (longer backroad = bigger block)
+                    const radius = Math.min(120, Math.max(40, seg.distance / 3));
+                    backroadPolys.push(createAvoidancePolygon(seg.lat, seg.lon, radius));
+                }
+
+                if (backroadPolys.length > (userAvoidPolygons || []).length) {
+                    try {
+                        const mainRoadResult = await planRoute(startLatLng, endLatLng, viaPoints, backroadPolys);
+                        if (mainRoadResult.hgvResult) {
+                            const newUnnamed = detectUnnamedSegments(mainRoadResult.hgvResult.geojson);
+                            const newTotalUnnamed = newUnnamed.reduce((s, seg) => s + seg.distance, 0);
+                            console.log(`[Backroad Avoidance] Re-route: ${newUnnamed.length} unnamed segments (${(newTotalUnnamed/1000).toFixed(1)}km) vs original ${unnamedSegs.length} (${(totalUnnamed/1000).toFixed(1)}km)`);
+
+                            // Accept if fewer unnamed segments or significantly less unnamed distance
+                            if (newUnnamed.length < unnamedSegs.length || newTotalUnnamed < totalUnnamed * 0.5) {
+                                console.log(`[Backroad Avoidance] ACCEPTED: fewer backroads`);
+                                hgvResult = mainRoadResult.hgvResult;
+                                if (mainRoadResult.carResult) carResult = mainRoadResult.carResult;
+                                hgvError = mainRoadResult.hgvError;
+                                hairpinTurns = detectHairpinTurns(hgvResult.geojson);
+                                showToast(`Found route using main roads`, 'success');
+                            } else {
+                                console.log(`[Backroad Avoidance] REJECTED: re-route still has backroads`);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('[Backroad Avoidance] Re-route failed:', e.message);
+                    }
+                }
+            }
+        }
+
         // Display routes on map
         clearRoutes();
         if (carResult) displayRoute(carResult.geojson, 'car');
