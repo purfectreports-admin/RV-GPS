@@ -142,57 +142,9 @@ async function onPlanRoute() {
         const userAvoidPolygons = roadblockPolys.length > 0 ? roadblockPolys : undefined;
         let { hgvResult, carResult, hgvError } = await planRoute(startLatLng, endLatLng, viaPoints, userAvoidPolygons);
 
-        // --- Iterative hairpin avoidance ---
-        // Only avoid true hairpins (>150° turns), not all sharp turns.
-        // Sanity check: if avoidance makes route >2x car distance, keep original.
-        const MAX_HAIRPIN_RETRIES = 2;
-        let hairpinAvoidPolygons = roadblockPolys.slice(); // start with user roadblocks
-        let hairpinTurns = [];
-        let avoidedCount = 0;
-        const carDist = carResult ? carResult.summary.distance : Infinity;
-        const originalHgvDist = hgvResult ? hgvResult.summary.distance : Infinity;
-
-        for (let attempt = 0; attempt < MAX_HAIRPIN_RETRIES; attempt++) {
-            const routeGeojson = hgvResult ? hgvResult.geojson : null;
-            if (!routeGeojson) break;
-
-            hairpinTurns = detectHairpinTurns(routeGeojson);
-            if (hairpinTurns.length === 0) break; // Clean route, done
-
-            // Block the approach road for all sharp/hairpin turns (>120°)
-            for (const t of hairpinTurns) {
-                hairpinAvoidPolygons.push(createAvoidancePolygon(t.approachLat, t.approachLon, 30));
-            }
-            avoidedCount += hairpinTurns.length;
-
-            showLoading(`Avoiding ${avoidedCount} hairpin turn${avoidedCount > 1 ? 's' : ''}, re-routing...`);
-
-            try {
-                const retryResult = await planRoute(startLatLng, endLatLng, viaPoints, hairpinAvoidPolygons);
-                if (retryResult.hgvResult) {
-                    const newDist = retryResult.hgvResult.summary.distance;
-                    // Sanity check: reject if new route is >2x car distance or >2x original HGV
-                    if (newDist > carDist * 2 || newDist > originalHgvDist * 2) {
-                        console.warn(`Hairpin avoidance route too long (${(newDist/1609).toFixed(1)} mi vs ${(carDist/1609).toFixed(1)} mi car) — keeping original`);
-                        hairpinAvoidPolygons = []; // reset
-                        break;
-                    }
-                    hgvResult = retryResult.hgvResult;
-                    if (retryResult.carResult) carResult = retryResult.carResult;
-                    hgvError = retryResult.hgvError;
-                } else {
-                    console.warn('Hairpin avoidance re-route failed, keeping previous route');
-                    break;
-                }
-            } catch (e) {
-                console.warn('Hairpin avoidance re-route failed:', e.message);
-                break;
-            }
-        }
-
-        // Final hairpin detection on the settled route
+        // Detect sharp turns for warnings (no automatic re-routing — that causes cascading failures)
         const finalGeojson = hgvResult ? hgvResult.geojson : (carResult ? carResult.geojson : null);
-        hairpinTurns = finalGeojson ? detectHairpinTurns(finalGeojson) : [];
+        const hairpinTurns = finalGeojson ? detectHairpinTurns(finalGeojson) : [];
 
         // Display routes on map
         clearRoutes();
@@ -206,14 +158,9 @@ async function onPlanRoute() {
 
         if (hairpinTurns.length > 0) {
             addHairpinMarkers(hairpinTurns);
+            showToast(`${hairpinTurns.length} sharp turn${hairpinTurns.length > 1 ? 's' : ''} detected — use Block to avoid`, 'warning');
         } else {
             clearHairpinMarkers();
-        }
-
-        if (avoidedCount > 0 && hairpinTurns.length === 0) {
-            showToast(`Avoided ${avoidedCount} sharp turn${avoidedCount > 1 ? 's' : ''} — route is clear`, 'success');
-        } else if (avoidedCount > 0) {
-            showToast(`Avoided ${avoidedCount} turn${avoidedCount > 1 ? 's' : ''}, ${hairpinTurns.length} remain — check warnings`, 'warning');
         }
 
         // Show summary panel
@@ -356,36 +303,11 @@ async function onAvoidAndReroute() {
 
     try {
         const viaPoints = getWaypointLatLngs();
-        let allAvoidPolygons = [...avoidPolygons];
-        let { hgvResult, carResult, hgvError } = await planRoute(startLatLng, endLatLng, viaPoints, allAvoidPolygons);
+        let { hgvResult, carResult, hgvError } = await planRoute(startLatLng, endLatLng, viaPoints, avoidPolygons);
 
-        // Hairpin avoidance on the re-routed path (only true hairpins >150°)
-        let hairpinTurns2 = [];
-        const reroCarDist = carResult ? carResult.summary.distance : Infinity;
-        const reroOrigDist = hgvResult ? hgvResult.summary.distance : Infinity;
-        for (let attempt = 0; attempt < 2; attempt++) {
-            const rg = hgvResult ? hgvResult.geojson : null;
-            if (!rg) break;
-            hairpinTurns2 = detectHairpinTurns(rg);
-            if (hairpinTurns2.length === 0) break;
-            for (const t of hairpinTurns2) {
-                allAvoidPolygons.push(createAvoidancePolygon(t.approachLat, t.approachLon, 30));
-            }
-            showLoading(`Avoiding hairpin turns, re-routing...`);
-            try {
-                const retry = await planRoute(startLatLng, endLatLng, viaPoints, allAvoidPolygons);
-                if (retry.hgvResult) {
-                    const nd = retry.hgvResult.summary.distance;
-                    if (nd > reroCarDist * 2 || nd > reroOrigDist * 2) break;
-                    hgvResult = retry.hgvResult; carResult = retry.carResult || carResult; hgvError = retry.hgvError;
-                }
-                else break;
-            } catch (e) { break; }
-        }
-
-        // Final hairpin check
+        // Detect sharp turns for warnings (no iterative re-routing)
         const finalGeojson = hgvResult ? hgvResult.geojson : null;
-        hairpinTurns2 = finalGeojson ? detectHairpinTurns(finalGeojson) : [];
+        const hairpinTurns2 = finalGeojson ? detectHairpinTurns(finalGeojson) : [];
 
         clearRoutes();
         if (carResult) displayRoute(carResult.geojson, 'car');

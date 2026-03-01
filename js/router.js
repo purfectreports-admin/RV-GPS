@@ -253,18 +253,22 @@ function pickSafestRoute(geojson) {
         // Steep grade segments
         const steepCount = elevation ? elevation.steepSegments.length : 0;
 
+        // Count steps on unnamed roads (no road name = likely residential/backroad)
+        const unnamedSteps = steps.filter(s => !s.isWarning && !s.name && s.distance > 50).length;
+
         // Scoring: lower is better
-        // Hairpins are heavily penalized (25 pts each)
-        // Sharp turns moderately penalized (10 pts each)
-        // U-turn instructions (15 pts each)
-        // Sharp turn instructions (5 pts each)
-        // Steep grades mildly (3 pts each)
-        // Extra distance penalty: 1 pt per extra km beyond shortest route
+        // Hairpins heavily penalized (25 pts)
+        // Sharp turns moderately penalized (10 pts)
+        // U-turn instructions (15 pts)
+        // Sharp turn instructions (5 pts)
+        // Unnamed/backroad segments (8 pts each — prefer named main roads)
+        // Steep grades mildly (3 pts)
         const penalty =
             hairpinCount * 25 +
             sharpTurnCount * 10 +
             uTurnSteps * 15 +
             sharpSteps * 5 +
+            unnamedSteps * 8 +
             steepCount * 3;
 
         candidates.push({
@@ -280,6 +284,7 @@ function pickSafestRoute(geojson) {
             sharpTurnCount,
             uTurnSteps,
             sharpSteps,
+            unnamedSteps,
             steepCount,
         });
     }
@@ -308,6 +313,7 @@ function pickSafestRoute(geojson) {
         if (c.hairpinCount > 0) issues.push(`${c.hairpinCount} hairpin`);
         if (c.sharpTurnCount > 0) issues.push(`${c.sharpTurnCount} sharp turn`);
         if (c.uTurnSteps > 0) issues.push(`${c.uTurnSteps} U-turn`);
+        if (c.unnamedSteps > 0) issues.push(`${c.unnamedSteps} unnamed road`);
         if (c.steepCount > 0) issues.push(`${c.steepCount} steep`);
         const issueStr = issues.length > 0 ? issues.join(', ') : 'no issues';
         const label = isBest ? '✓' : ' ';
